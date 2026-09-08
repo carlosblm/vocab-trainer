@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Entorno
+.env
+!.env.example
+
+# Datos personales — NUNCA se commitean
+# vocab.db contiene el historial de lectura del autor y fragmentos
+# literales de libros con derechos de autor (§10.1 de la propuesta).
+data/
+*.db
+!tests/fixtures/*.db
+
+# Editor
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+
+# Sistema
+.DS_Store
