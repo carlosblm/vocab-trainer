@@ -232,3 +232,26 @@ Es un fallo silencioso. La respuesta parece correcta a nivel de HTTP y rompería
 
 **Revisión**: en qué momento y con qué criterio se reevaluaría. Omitir si es definitiva.
 ```
+
+---
+## D-011 · Bucle de desarrollo en `.venv`, artefacto oficial en contenedor
+```markdown
+**Fecha**: 2026-09-08 · **Fase**: F0
+
+**Decisión**: los tests y la CLI se ejecutan en local con `uv run` sobre un
+`.venv`. La imagen Docker es el artefacto desplegable y la CI ejecuta los
+tests dentro de ella.
+
+**Descartado**: ejecutar absolutamente todo dentro del contenedor, que es la
+lectura literal de §3.3.3 ("todo en contenedores desde el día 1").
+
+**Por qué**: con spaCy y su modelo dentro de la imagen, cada ciclo de prueba
+implicaría reconstruir. El principio de los doce factores exige que el
+artefacto desplegable sea único y versionado, no que se prohíba ejecutar un
+test fuera de él. La divergencia entre `.venv` e imagen la detecta la CI en
+el siguiente push, no dos semanas después.
+
+**Riesgo asumido**: si la CI no está operativa, la divergencia pasa
+desapercibida. Por eso la ejecución de tests en contenedor entra en la CI
+en F6 como muy tarde.
+```
