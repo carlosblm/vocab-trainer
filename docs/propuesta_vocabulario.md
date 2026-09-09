@@ -1,7 +1,7 @@
 # Propuesta técnica — Aplicación de estudio de vocabulario
 
 **Documento de contexto del proyecto**
-Autor: Carlos Blázquez Martín · Versión 1.4 · Septiembre 2026
+Autor: Carlos Blázquez Martín · Versión 1.5 · Septiembre 2026
 
 ---
 
@@ -41,6 +41,7 @@ La información valiosa que el Kindle sí guarda y no explota es **la frase conc
 3. Para cada palabra genera un ejercicio, anclado a la frase real del libro.
 4. El usuario responde; su acierto o fallo realimenta la programación del siguiente repaso.
 5. El usuario puede consultar su progreso por libro, por idioma y por palabra.
+6. Cada pocas semanas vuelve a subir el archivo. La ingesta añade solo lo nuevo y respeta el progreso ya acumulado (D-012).
 
 ### 2.3 Tipos de ejercicio
 
@@ -60,6 +61,12 @@ La información valiosa que el Kindle sí guarda y no explota es **la frase conc
 Pedagógicamente es de los más valiosos para un hispanohablante: las preposiciones en inglés no se deducen, se memorizan por colocación, y son un punto de fallo persistente en niveles intermedios.
 
 
+### 2.4 Practicidad
+
+La aplicación es útil sin conexión a ningún servicio externo: el ejercicio determinista y la programación de repasos funcionan en local con el modelo de lenguaje ejecutándose en la propia máquina. Esto no es un detalle técnico, es una decisión de producto: el usuario no depende de una cuenta ni de una factura para estudiar.
+
+---
+
 ### 2.5 Unidades léxicas multipalabra
 
 **El problema.** El Kindle guarda una sola palabra, pero el significado no siempre reside en ella. Si el usuario consulta `eased` en *"electronics eased out hydraulics"*, la base de datos almacena `eased` con lema `ease`. Un ejercicio construido sobre esa palabra enseñaría *aliviar* o *facilitar*, cuando el significado real de `ease out` es *desplazar*.
@@ -78,19 +85,13 @@ Pedagógicamente es de los más valiosos para un hispanohablante: las preposicio
 
 **Relación con §5.4.** Un phrasal verb es un caso particular del problema de desambiguación de acepción: la unidad de significado no coincide con la palabra almacenada. Ambos comparten la misma dependencia de una fuente léxica.
 
-### 2.4 Practicidad
-
-La aplicación es útil sin conexión a ningún servicio externo: el ejercicio determinista y la programación de repasos funcionan en local con el modelo de lenguaje ejecutándose en la propia máquina. Esto no es un detalle técnico, es una decisión de producto: el usuario no depende de una cuenta ni de una factura para estudiar.
-
----
-
 ## 3. Alcance
 
 ### 3.1 Dentro del alcance de la v1
 
 - Importación de `vocab.db` de Kindle.
 - Normalización: lematización, categoría gramatical, limpieza de ruido, segmentación a frase completa.
-- Los tres tipos de ejercicio marcados como v1 en §2.3.
+- Los cuatro tipos de ejercicio marcados como v1 en §2.3.
 - Repetición espaciada con FSRS.
 - Interfaz web mínima y funcional.
 - Capa de validación de las salidas del modelo, con reintento y degradación.
@@ -111,13 +112,13 @@ La aplicación es útil sin conexión a ningún servicio externo: el ejercicio d
 
 ### 3.3 Los cuatro desacoplamientos obligatorios
 
-Estas tres decisiones son baratas ahora y caras después. Por eso están en el alcance a pesar del principio general de mantener el alcance mínimo.
+Estas cuatro decisiones son baratas ahora y caras después. Por eso están en el alcance a pesar del principio general de mantener el alcance mínimo.
 
 #### 3.3.1 Idioma
 
 **Decisión: el idioma es un dato, nunca una rama del código.**
 
-- La v1 se lanza **solo con inglés** (753 de las 1.345 palabras del corpus real). Motivo doble: reduce a la mitad el trabajo de diseño de prompts y de evaluación, y el inglés es el idioma que el autor necesita reforzar.
+- La v1 se lanza **solo con inglés** (913 de las 1.505 palabras del corpus real). Motivo doble: reduce a la mitad el trabajo de diseño de prompts y de evaluación, y el inglés es el idioma que el autor necesita reforzar.
 - Toda entidad lleva su columna `lang`. Los generadores de ejercicios son agnósticos al idioma.
 - Los *prompts* viven en archivos de plantilla versionados, indexados por `(tarea, idioma)`. Añadir español consiste en añadir plantillas y un modelo de spaCy, no en tocar la lógica.
 - El conjunto de evaluación también se indexa por idioma: las métricas se calculan por idioma, nunca agregadas.
@@ -178,7 +179,7 @@ Forzar el mismo modelo en las tres es una decisión que no se querrá mantener.
 **Implementación.** Una tabla de configuración indexada por tarea, resuelta por variables de entorno:
 
 ```
-# Modelos orientativos (pueden cambiarse en el futuro para utilizar el más 
+# Modelos orientativos (pueden cambiarse en el futuro para utilizar el más
 # adecuado para cada tarea)
 LLM_TASK__DISTRACTORES__PROVIDER=ollama
 LLM_TASK__DISTRACTORES__MODEL=qwen3.5:4b
@@ -210,36 +211,40 @@ El dominio invoca `llm.run("distractores", entrada)` y no conoce el modelo, el p
 
 ### 4.1 Contenido real del corpus
 
-Análisis del archivo `vocab.db` del autor (agosto 2026):
+Análisis de dos exportaciones del `vocab.db` del autor:
 
-| Métrica | Valor |
-|---|---|
-| Palabras únicas | 1.345 |
-| Consultas totales | 1.511 |
-| Libros distintos | 25 |
-| Reparto por idioma | 753 inglés · 592 español |
-| Rango temporal | julio 2024 → agosto 2026 |
-| Consultas con frase de contexto | 1.511 de 1.511 (100 %) |
-| Longitud media de la frase | 178 caracteres |
-| Palabras con una sola consulta | 1.212 de 1.345 |
+| Métrica | ago. 2026 | sept. 2026 |
+|---|---|---|
+| Palabras únicas | 1.345 | 1.505 |
+| Consultas totales | 1.511 | 1.690 |
+| Libros distintos | 25 | 25 |
+| Reparto por idioma | 753 inglés · 592 español | 913 inglés · 592 español |
+| Consultas en inglés | 845 | 1.024 |
+| Consultas con frase de contexto | 100 % | 100 % |
+| Longitud media de la frase | 178 caracteres | 172 caracteres |
+| Palabras con una sola consulta | 1.212 | 1.357 |
 
-**Dato crítico para el diseño**: la palabra consultada aparece **literalmente** dentro de su frase de contexto en el 100 % de los casos. Esto hace que el ejercicio de hueco (`cloze_original`) sea una sustitución de cadena trivial y perfectamente fiable, sin ninguna necesidad de modelo de lenguaje.
+Rango temporal: julio 2024 → septiembre 2026.
 
-**Volumen**: 1.345 palabras son suficientes de sobra para la aplicación y del todo insuficientes para entrenar nada. Queda confirmado que este es un proyecto de **inferencia, orquestación y evaluación**, no de entrenamiento.
+**Crecimiento**: 160 palabras nuevas en tres días, todas en inglés. La reimportación no es un caso excepcional sino el flujo normal de uso, y la ingesta debe ser incremental (D-012).
+
+**Dato crítico para el diseño**: la palabra consultada aparece **literalmente** dentro de su frase de contexto en el 100 % de los casos, comprobado en las dos exportaciones. Esto hace que el ejercicio de hueco (`cloze_original`) sea una sustitución de cadena trivial y perfectamente fiable, sin ninguna necesidad de modelo de lenguaje.
+
+**Volumen**: 1.505 palabras son suficientes de sobra para la aplicación y del todo insuficientes para entrenar nada. Queda confirmado que este es un proyecto de **inferencia, orquestación y evaluación**, no de entrenamiento.
 
 ### 4.2 Problemas de calidad detectados
 
-Estos tres problemas son reales, están medidos sobre el corpus del autor y requieren trabajo explícito en la fase de ingesta.
+Estos cuatro problemas son reales, están medidos sobre el corpus del autor y requieren trabajo explícito en la fase de ingesta.
 
 **1. La columna `pos` no es la categoría gramatical.** Contiene identificadores de posición dentro del libro, con valores del tipo `AfyTAABqAAAA:3573613`. La categoría gramatical debe derivarse con spaCy analizando la palabra en su frase. Es un error fácil de cometer por el nombre de la columna.
 
-**2. Frases truncadas: caso marginal.** El Kindle guarda la frase completa. 1.421 de 1.511 contextos terminan en punto, y solo 28 (1,9 %) no acaban en puntuación reconocible, la mayoría porque terminan con el corchete de una nota al pie. Frases realmente cortadas a mitad: unas 5 o 6 de 1.511.
+**2. Frases sucias, no truncadas.** El Kindle guarda la frase completa. 1.584 de 1.690 contextos terminan en punto y solo 31 (1,8 %) no acaban en puntuación reconocible; de esos 31, 17 terminan con el corchete de una nota al pie. Frases realmente cortadas a mitad: unas 11 de 1.690 (0,7 %).
 
-Se necesita igualmente una etapa de recorte a frase completa con el segmentador de spaCy, pero es una salvaguarda, no trabajo mayoritario. Si tras el recorte la palabra objetivo no sobrevive en un contexto utilizable, la entrada se marca como sin contexto y solo admite ejercicios de tipo `cloze_generated`.
+El trabajo mayoritario es de **limpieza de sufijo**: notas al pie (`[59]`, `[`) y espacios sobrantes, que afectan al 98,5 % de las frases. El recorte a frase completa con el segmentador de spaCy queda como salvaguarda para esa decena de casos, no como etapa principal. Si tras el recorte la palabra objetivo no sobrevive en un contexto utilizable, la entrada se marca como sin contexto y solo admite ejercicios de tipo `cloze_generated`.
 
 **3. Ruido por toques accidentales.** Entre las palabras del corpus aparecen "En" y "Salvo", que son pulsaciones involuntarias sobre palabras funcionales. Filtrarlas mediante listas de palabras vacías por idioma es trabajo obligatorio; sin él, la aplicación pedirá al usuario que estudie preposiciones que ya conoce.
 
-**4. La columna `category`.** Toma el valor 0 en 1.344 registros y 100 en uno. La interpretación probable es "en aprendizaje" frente a "dominada", pero *no estoy seguro* y conviene verificarlo antes de darle uso.
+**4. La columna `category` no se usa.** Toma el valor 0 en 1.504 registros y 100 en uno solo, el mismo en las dos exportaciones. La interpretación probable es "en aprendizaje" frente a "dominada", pero con un único caso no se puede inferir del archivo. El estado de aprendizaje lo gestiona FSRS dentro de la aplicación, así que la columna es prescindible y la cuestión queda cerrada.
 
 ### 4.3 Modelo de datos canónico
 
@@ -247,11 +252,14 @@ Independiente de la fuente. Nombres orientativos.
 
 ```
 users            (id, created_at)
-sources          (id, user_id, kind, filename, checksum, imported_at)
-entries          (id, user_id, source_id, term, lemma, lang, pos, first_seen_at)
-                 UNIQUE (user_id, lemma, lang)
-contexts         (id, entry_id, raw_sentence, clean_sentence, is_truncated,
-                  book_title, book_lang, captured_at)
+sources   (id, user_id, kind, filename, checksum, imported_at)
+          UNIQUE (user_id, checksum)
+entries   (id, user_id, source_id, external_id, term, lemma, lang, pos,
+           first_seen_at)
+          UNIQUE (user_id, lemma, lang)
+contexts  (id, entry_id, external_id, raw_sentence, clean_sentence,
+           is_truncated, book_title, book_lang, captured_at)
+          UNIQUE (entry_id, external_id)
 exercises        (id, entry_id, context_id, kind, lang, payload,
                   generator, model, prompt_version, validation_report, created_at)
 reviews          (id, entry_id, exercise_id, rating, answered_at)
@@ -264,6 +272,8 @@ Notas de diseño:
 - `user_id` está presente desde el principio aunque la v1 sea monousuario. Añadir autenticación después será una migración, no una reescritura.
 - `exercises` guarda `model` y `prompt_version` junto al ejercicio. Sin eso es imposible saber después qué configuración produjo qué resultado, y la evaluación pierde sentido.
 - `contexts` conserva la frase original **y** la limpia. Nunca se destruye el dato de partida.
+- `external_id` guarda el identificador de la fuente (`en:resilient`, `LOOKUPS.id`). Es lo que hace idempotente la reimportación (D-012).
+- La ingesta no escribe nunca en `reviews` ni en `scheduling_state`. El progreso del usuario vive en tablas que la importación no toca, y esa separación es lo que hace segura la reimportación.
 
 ---
 
@@ -547,7 +557,7 @@ Ritmo asumido: 10–20 h semanales, en paralelo a la búsqueda activa de empleo.
 
 5. ¿Qué fuente de definiciones y acepciones usar para inglés, con licencia compatible? (bloqueante solo para §5.4)
 6. ¿Los distractores generados por LLM superan a un enfoque con embeddings más filtro gramatical? Se responde con el arnés en F2.
-7. ¿Qué significa exactamente la columna `category` del `vocab.db`?
+7. ~~¿Qué significa exactamente la columna `category` del `vocab.db`?~~ **Cerrada**: un único registro con valor distinto de 0 en dos exportaciones. No se puede inferir y no se usa; FSRS gestiona el estado de aprendizaje.
 
 ---
 

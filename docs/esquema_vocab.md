@@ -1,6 +1,6 @@
 # Esquema de `vocab.db` (Kindle Vocabulary Builder)
 
-Documento de referencia sobre el formato de entrada. Todo lo que hay aquí está **verificado sobre un archivo real** (1.345 palabras, 1.511 consultas, 25 libros, julio 2024 – agosto 2026), no sacado de documentación.
+Documento de referencia sobre el formato de entrada. Todo lo que hay aquí está **verificado sobre archivos reales** —dos exportaciones del mismo Kindle, de agosto y septiembre de 2026—, no sacado de documentación.
 
 Es un SQLite corriente. Se encuentra en el Kindle, por USB, en `system/vocabulary/vocab.db`.
 
@@ -18,7 +18,7 @@ LOOKUPS.book_key  →  BOOK_INFO.id
 LOOKUPS.dict_key  →  DICT_INFO.id
 ```
 
-Verificado sobre el archivo real: **0 palabras sin consulta y 0 consultas huérfanas**. La integridad se cumple pese a no estar declarada.
+Verificado sobre los archivos reales: **0 palabras sin consulta y 0 consultas huérfanas**. La integridad se cumple pese a no estar declarada.
 
 ---
 
@@ -45,8 +45,8 @@ CREATE TABLE WORDS (
 | `stem` | Forma lematizada | Ver §4.1 |
 | `lang` | `es`, `en` | Fiable. **Usar este campo, no detectar el idioma** |
 | `category` | 0 o 100 | Ver §4.4 |
-| `timestamp` | Epoch en **milisegundos** | Dividir entre 1000 para convertir |
-| `profileid` | Vacío en el archivo analizado | Ignorable |
+| `timestamp` | Epoch en **milisegundos** | Es la **última** consulta, no la primera. Ver §5.1 |
+| `profileid` | Vacío en los archivos analizados | Ignorable |
 
 ```
 ('es:prebenda', 'prebenda', 'prebenda', 'es', 0, 1722290207037, '')
@@ -71,15 +71,15 @@ CREATE TABLE LOOKUPS (
 
 | Campo | Contenido | Notas |
 |---|---|---|
-| `id` | `CR!0DHF...:AQ04AACSAQAA:384195:8` | Compuesto por libro y posición |
+| `id` | `CR!0DHF...:AQ04AACSAQAA:384195:8` | Compuesto por libro y posición. Estable entre exportaciones (§5.2) |
 | `word_key` | → `WORDS.id` | |
 | `book_key` | → `BOOK_INFO.id` | |
 | `dict_key` | → `DICT_INFO.id` | El diccionario usado |
 | `pos` | `AYo4AADGBAAA:1402162` | **NO es categoría gramatical.** Ver §4.2 |
 | `usage` | La frase completa del libro | El activo del proyecto. Ver §4.3 |
-| `timestamp` | Epoch en milisegundos | |
+| `timestamp` | Epoch en milisegundos | Inmutable. Es el momento de esa consulta concreta |
 
-Una misma palabra puede tener varias filas si se consultó en libros o pasajes distintos. En el archivo analizado: 1.212 palabras con una consulta, 109 con dos, 17 con tres, 6 con cuatro y 1 con seis.
+Una misma palabra puede tener varias filas si se consultó en libros o pasajes distintos. En el archivo de septiembre de 2026: 1.357 palabras con una consulta, 121 con dos, 19 con tres, 7 con cuatro y 1 con seis.
 
 ### `BOOK_INFO` — los libros
 
@@ -113,6 +113,7 @@ SELECT
   w.word          AS palabra,
   w.stem          AS lema,
   w.lang          AS idioma,
+  l.id            AS lookup_id,
   l.usage         AS frase,
   b.title         AS libro,
   b.lang          AS idioma_libro,
@@ -132,7 +133,7 @@ Cinco cosas que hay que resolver en la ingesta. Ninguna es opcional.
 
 ### 4.1 `stem` es una lematización parcial y ruidosa
 
-Solo 825 de 1.345 registros tienen `stem` idéntico a `word`. En el resto, la lematización a veces es correcta y a veces no:
+Solo 921 de 1.505 registros tienen `stem` idéntico a `word`. En el resto, la lematización a veces es correcta y a veces no:
 
 | `word` | `stem` | Valoración |
 |---|---|---|
@@ -155,35 +156,34 @@ Es un requisito de la métrica D2 (homogeneidad gramatical de los distractores).
 
 ### 4.3 `usage`: el activo del proyecto
 
-Lo bueno, verificado sobre el archivo real:
+Lo bueno, verificado sobre 1.690 consultas:
 
-- **1.511 de 1.511 consultas tienen frase.** Cobertura del 100 %.
-- **La palabra aparece literalmente en su frase el 100 % de las veces.** Esto hace que el ejercicio de hueco (`cloze_original`) sea una sustitución de cadena trivial y perfectamente fiable, sin necesidad de ningún modelo.
-- Longitud media: 178 caracteres. Máxima: 1.003.
-- **1.421 de 1.511 terminan en punto.** El contexto llega completo.
+- **1.690 de 1.690 consultas tienen frase.** Cobertura del 100 %.
+- **La palabra aparece literalmente en su frase el 100 % de las veces.** Comprobado en las dos exportaciones. Esto hace que el ejercicio de hueco (`cloze_original`) sea una sustitución de cadena trivial y perfectamente fiable, sin necesidad de ningún modelo.
+- Longitud media: 172 caracteres. Máxima: 1.003.
 
-**Truncamiento: marginal.** El Kindle guarda la frase completa, no un recorte por longitud.
+**El problema no es el truncamiento, es la suciedad.** El Kindle guarda la frase completa, no un recorte por longitud.
 
 | Terminación de la frase | Casos |
 |---|---|
-| Punto | 1.421 |
-| Interrogación o exclamación | 32 |
-| Comillas de cierre (`”`, `’`, `»`) | 27 |
-| Sin puntuación reconocible | 28 (1,9 %) |
+| Punto | 1.584 |
+| Interrogación o exclamación | 36 |
+| Comillas de cierre (`”`, `’`, `»`) | 39 |
+| Sin puntuación reconocible | 31 (1,8 %) |
 
-De esas 28, la mayoría terminan en `[`, que es el inicio de una llamada a nota al pie del libro. **Frases realmente cortadas: unas 5 o 6 de 1.511.**
+De esas 31, 17 terminan en `[`: la frase está completa y lo que sobra es el inicio de una llamada a nota al pie del libro. **Frases realmente cortadas a mitad: unas 11 de 1.690** (0,7 %).
 
-Se recorta a frase completa con el segmentador de spaCy por higiene, pero no es un riesgo del proyecto. **Nunca completar el texto que falta con un modelo**: no existe en la base de datos, así que solo se puede fabricar.
+El trabajo de ingesta que esto exige es **limpieza de sufijo, no rescate de frases rotas**. El segmentador de spaCy queda como salvaguarda para esa decena de casos. **Nunca completar el texto que falta con un modelo**: no existe en la base de datos, así que solo se puede fabricar.
 
-**Espacios sobrantes.** 1.485 de 1.511 frases empiezan o terminan con espacio. Un `trim()` obligatorio.
+**Espacios sobrantes.** 1.665 de 1.690 frases (98,5 %) empiezan o terminan con espacio. Un `trim()` obligatorio.
 
 **Llamadas a notas al pie.** Algunas frases terminan con `[` o contienen `[59]`: son referencias del libro que se han colado en el recorte. Hay que limpiarlas antes de mostrarlas.
 
-### 4.4 `category`: interpretación no confirmada
+### 4.4 `category`: no se usa
 
-Toma el valor 0 en 1.344 registros y 100 en uno solo. La interpretación probable es *en aprendizaje* frente a *dominada*, marcada desde el propio Kindle.
+Toma el valor 0 en 1.504 registros y 100 en uno solo (`en:managed`). La interpretación probable es *en aprendizaje* frente a *dominada*, marcada desde el propio Kindle.
 
-**No está confirmado** y, con un solo caso, tampoco se puede inferir del archivo. **No usar este campo hasta verificarlo.** El estado de aprendizaje lo gestiona FSRS dentro de la aplicación, así que no es bloqueante.
+Sigue habiendo un único caso en las dos exportaciones, y no cambia entre ellas, así que no se puede inferir del archivo. **No se usa este campo.** El estado de aprendizaje lo gestiona FSRS dentro de la aplicación, así que la columna es prescindible y la cuestión queda cerrada.
 
 ### 4.5 Ruido por toques accidentales
 
@@ -193,26 +193,56 @@ Hay que filtrarlas con listas de palabras vacías por idioma. Sin ese filtro, la
 
 ---
 
-## 5. Perfil del archivo de referencia
+## 5. Comportamiento entre exportaciones
 
-| Métrica | Valor |
-|---|---|
-| Palabras únicas | 1.345 |
-| Consultas totales | 1.511 |
-| Libros | 25 |
-| Inglés / español | 753 / 592 |
-| Rango temporal | jul. 2024 – ago. 2026 |
-| Consultas con contexto | 1.511 (100 %) |
-| Longitud media del contexto | 178 caracteres |
-| Palabras con una sola consulta | 1.212 |
+El Kindle acumula: cada exportación contiene todo lo anterior más lo nuevo. Este apartado es la base sobre la que se apoya la ingesta incremental (D-012).
 
-**Volumen**: suficiente de sobra para la aplicación, del todo insuficiente para entrenar nada. Confirma que el proyecto es de inferencia, orquestación y evaluación.
+### 5.1 `WORDS.timestamp` es la última consulta, no la primera
 
-**Historial de repaso**: 1.212 de 1.345 palabras tienen una sola consulta, así que la curva de repetición espaciada arranca casi de cero y se construye con el uso.
+De las 1.345 palabras comunes a las dos exportaciones, 16 cambiaron de `timestamp`, y las 16 eran palabras vueltas a consultar en el intervalo. Ningún otro campo de `WORDS` cambia.
+
+**Consecuencia**: `entries.first_seen_at` se deriva de `MIN(LOOKUPS.timestamp)` de las consultas de esa palabra. **Nunca de `WORDS.timestamp`**, que daría la fecha más reciente bajo un nombre que promete lo contrario.
+
+### 5.2 Los identificadores son estables
+
+Comparadas dos exportaciones del mismo Kindle con tres días de diferencia (1.511 → 1.690 consultas):
+
+| Tabla | En ambas | Desaparecidas | Añadidas |
+|---|---|---|---|
+| `LOOKUPS` | 1.511 | 0 | 179 |
+| `WORDS` | 1.345 | 0 | 160 |
+| `BOOK_INFO` | 25 | 0 | 0 |
+
+Las filas comunes de `LOOKUPS` y `BOOK_INFO` son **idénticas campo a campo**, incluida `usage`. El Kindle nunca reescribe ni elimina consultas pasadas.
+
+`LOOKUPS.id` y `WORDS.id` sirven, por tanto, como `external_id` para deduplicar sin perder el progreso del usuario.
 
 ---
 
-## 6. Nota sobre el desacoplamiento
+## 6. Perfil de los archivos de referencia
+
+| Métrica | ago. 2026 | sept. 2026 |
+|---|---|---|
+| Palabras únicas | 1.345 | 1.505 |
+| Consultas totales | 1.511 | 1.690 |
+| Libros | 25 | 25 |
+| Inglés / español (palabras) | 753 / 592 | 913 / 592 |
+| Consultas en inglés | 845 | 1.024 |
+| Consultas con contexto | 1.511 (100 %) | 1.690 (100 %) |
+| Longitud media del contexto | 178 caracteres | 172 caracteres |
+| Palabras con una sola consulta | 1.212 | 1.357 |
+
+Rango temporal: julio 2024 – septiembre 2026.
+
+**Volumen**: suficiente de sobra para la aplicación, del todo insuficiente para entrenar nada. Confirma que el proyecto es de inferencia, orquestación y evaluación.
+
+**Crecimiento**: 160 palabras nuevas en tres días, **todas en inglés**. La reimportación no es un caso excepcional, es el flujo normal de uso.
+
+**Historial de repaso**: 1.357 de 1.505 palabras tienen una sola consulta, así que la curva de repetición espaciada arranca casi de cero y se construye con el uso.
+
+---
+
+## 7. Nota sobre el desacoplamiento
 
 Todo lo descrito aquí vive **exclusivamente** dentro del adaptador `KindleVocabImporter`. El dominio de la aplicación no conoce estas tablas, ni el formato de los identificadores, ni la palabra «Kindle».
 

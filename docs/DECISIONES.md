@@ -24,6 +24,8 @@ Este archivo es el material de entrevista del proyecto. Cuando pregunten "¿por 
 | D-008 | 2026-09-07 | Diseño | Guarda de unidad léxica antes de generar cualquier ejercicio |
 | D-009 | 2026-09-07 | Diseño | `preposition_cloze` entra en la v1 y es 100 % determinista |
 | D-010 | 2026-09-07 | Diseño | No completar frases con un modelo |
+| D-011 | 2026-09-08 | F0 | Bucle de desarrollo en `.venv`, artefacto en contenedor |
+| D-012 | 2026-09-09 | F0 | La reimportación es incremental y no toca el progreso |
 
 ---
 
@@ -168,11 +170,13 @@ Es un fallo silencioso. La respuesta parece correcta a nivel de HTTP y rompería
 
 **Por qué**: el Kindle guarda una sola palabra, pero el significado no siempre reside en ella. Ejemplo real del corpus: `eased` en *"electronics eased out hydraulics"*. La aplicación enseñaría *aliviar*, cuando `ease out` significa *desplazar*. **No es una funcionalidad ausente, es la aplicación enseñando algo falso.**
 
-**Incidencia medida**: 5 o 6 casos reales en 845 consultas en inglés (menos del 1 %). Bajo en volumen, grave en efecto.
+**Incidencia medida**: 5 o 6 casos reales sobre las 845 consultas en inglés del corpus de agosto de 2026 (menos del 1 %). Bajo en volumen, grave en efecto.
 
 **El problema es la detección, no la generación.** Una regla de "palabra seguida de partícula" da **80 % de falsos positivos** sobre el corpus real (`sojourn in`, `stake in`, `tycoons in` son sustantivo más preposición). Orden previsto: dependencias de spaCy, después lista de phrasal verbs frecuentes, y LLM solo como último recurso porque tiende a los falsos positivos.
 
-**Sin verificar**: la precisión del análisis de dependencias sobre frases truncadas (el 40 % aproximado del corpus). Es el primer número a medir en la F0.
+**Sin verificar**: la precisión del análisis de dependencias sobre este corpus. Es el primer número a medir en la F0.
+
+El riesgo no viene de frases truncadas —solo el 0,7 % lo están— sino de la suciedad de maquetación: notas al pie (`[59]`, `[`) y espacios sobrantes en el 98,5 % de las frases. El análisis se ejecuta sobre la frase ya limpia, así que la limpieza es una precondición de la detección, no un paso independiente.
 
 **Métrica asociada**: D8.
 
@@ -188,7 +192,7 @@ Es un fallo silencioso. La respuesta parece correcta a nivel de HTTP y rompería
 
 **Por qué entra en la v1**:
 
-- **Cobertura**: 178 de 845 consultas en inglés (**21 %**) tienen la palabra seguida de preposición. Frente al <1 % de los phrasal verbs, hay volumen de sobra.
+- **Cobertura**: 178 de 845 consultas en inglés (**21 %**) tienen la palabra seguida de preposición, medido sobre el corpus de agosto de 2026. Frente al <1 % de los phrasal verbs, hay volumen de sobra.
 - **Coste**: horas de trabajo. Es sustitución de cadena, igual que `cloze_original`.
 - **Fiabilidad**: la respuesta correcta está literalmente en la frase. No hay nada que alucinar.
 - **Valor pedagógico**: las preposiciones en inglés no se deducen, se memorizan por colocación, y son un fallo persistente en hispanohablantes de nivel intermedio.
@@ -217,25 +221,8 @@ Es un fallo silencioso. La respuesta parece correcta a nivel de HTTP y rompería
 
 ---
 
-## Plantilla para nuevas entradas
-
-```markdown
-## D-0XX · Título en una línea
-
-**Fecha**: AAAA-MM-DD · **Fase**: FX
-
-**Decisión**: qué se hace.
-
-**Descartado**: qué alternativa se consideró y no se eligió.
-
-**Por qué**: el motivo, con números si los hay.
-
-**Revisión**: en qué momento y con qué criterio se reevaluaría. Omitir si es definitiva.
-```
-
----
 ## D-011 · Bucle de desarrollo en `.venv`, artefacto oficial en contenedor
-```markdown
+
 **Fecha**: 2026-09-08 · **Fase**: F0
 
 **Decisión**: los tests y la CLI se ejecutan en local con `uv run` sobre un
@@ -254,4 +241,62 @@ el siguiente push, no dos semanas después.
 **Riesgo asumido**: si la CI no está operativa, la divergencia pasa
 desapercibida. Por eso la ejecución de tests en contenedor entra en la CI
 en F6 como muy tarde.
+
+
+---
+
+## D-012 · La reimportación es incremental y no toca el progreso
+
+**Fecha**: 2026-09-09 · **Fase**: F0
+
+**Decisión**: la ingesta inserta solo lo que no existe. Las palabras y
+contextos ya presentes se dejan intactos. Nunca se borra nada, ni siquiera
+si desaparece del `vocab.db` de origen.
+
+**Descartado**: (a) rechazar archivos ya importados por `checksum`, que
+impediría reimportar un archivo que ha crecido; (b) borrar e insertar,
+que destruiría el estado de repetición espaciada.
+
+**Por qué**: el Kindle acumula. Cada subida contiene casi todo lo anterior
+más lo nuevo. Sin idempotencia, el usuario tendría palabras duplicadas y
+volvería a repasar desde cero vocabulario que ya domina.
+
+**Cómo se garantiza**:
+- `entries` única por `(user_id, lemma, lang)`.
+- `contexts` única por `(entry_id, external_id)`, donde `external_id` es
+  el `LOOKUPS.id` del Kindle (libro + posición), estable entre exportaciones.
+- `INSERT ... ON CONFLICT DO NOTHING`, atómico, no `SELECT` previo.
+- El progreso vive en `scheduling_state` y `reviews`, que la ingesta no toca.
+
+**Nota**: el `checksum` de `sources` registra qué archivo se subió, no sirve
+como criterio de "ya importado". Un archivo con una palabra más tiene otro
+checksum y debe aceptarse.
+
+**Verificado (2026-09-09)**: comparadas dos exportaciones reales del mismo
+Kindle (1.511 → 1.690 consultas). Los 1.511 `LOOKUPS.id` antiguos siguen
+presentes y con **todos** sus campos idénticos, incluido `usage`. Ninguna
+fila desaparece ni muta. `BOOK_INFO` tampoco cambia.
+
+**Excepción encontrada**: `WORDS.timestamp` sí cambia (16 casos), y siempre
+en palabras vueltas a consultar. Es la fecha de la **última** consulta, no
+de la primera. Por tanto `entries.first_seen_at` se deriva de
+`MIN(LOOKUPS.timestamp)`, nunca de `WORDS.timestamp`.
+
+
+---
+
+## Plantilla para nuevas entradas
+
+```markdown
+## D-0XX · Título en una línea
+
+**Fecha**: AAAA-MM-DD · **Fase**: FX
+
+**Decisión**: qué se hace.
+
+**Descartado**: qué alternativa se consideró y no se eligió.
+
+**Por qué**: el motivo, con números si los hay.
+
+**Revisión**: en qué momento y con qué criterio se reevaluaría. Omitir si es definitiva.
 ```
