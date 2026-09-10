@@ -232,6 +232,12 @@ Rango temporal: julio 2024 → septiembre 2026.
 
 **Volumen**: 1.505 palabras son suficientes de sobra para la aplicación y del todo insuficientes para entrenar nada. Queda confirmado que este es un proyecto de **inferencia, orquestación y evaluación**, no de entrenamiento.
 
+**Capitalización.** `WORDS.id` incluye la capitalización original, así que
+`en:Hence` y `en:hence` son dos filas distintas. En el corpus inglés hay 8
+pares así (`Hence/hence`, `Biases/biases`, `VACUUM/vacuum`...), palabras
+consultadas una vez al inicio de frase y otra en medio. La deduplicación por
+lema en minúsculas los une: 753 filas → 745 entradas.
+
 ### 4.2 Problemas de calidad detectados
 
 Estos cuatro problemas son reales, están medidos sobre el corpus del autor y requieren trabajo explícito en la fase de ingesta.
