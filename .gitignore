@@ -16,7 +16,7 @@ __pycache__/
 # literales de libros con derechos de autor (§10.1 de la propuesta).
 data/
 *.db
-!tests/fixtures/*.db
+!**/tests/fixtures/*.db
 
 # Editor
 .vscode/*
