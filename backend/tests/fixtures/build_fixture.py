@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-DESTINATION = Path(__file__).parent / "vocab_fixture.db"
+FIXTURE_PATH = Path(__file__).parent / "vocab_fixture.db"
 
 SCHEMA = """
 CREATE TABLE WORDS (
@@ -33,7 +33,7 @@ WORDS = [
 ]
 
 # (lookup_id, word_key, book_key, usage, ts)  — ts crecientes por palabra
-QUERIES = [
+LOOKUPS = [
     # caso normal, con espacios sobrantes (98,5 % del corpus real)
     (
         "CR!BOOK1:1",
@@ -84,8 +84,8 @@ QUERIES = [
 
 
 def build() -> Path:
-    DESTINATION.unlink(missing_ok=True)
-    con = sqlite3.connect(DESTINATION)
+    FIXTURE_PATH.unlink(missing_ok=True)
+    con = sqlite3.connect(FIXTURE_PATH)
     con.executescript(SCHEMA)
     con.executemany("INSERT INTO BOOK_INFO VALUES (?,?,?,?,?,?)", BOOKS)
     con.executemany(
@@ -96,11 +96,11 @@ def build() -> Path:
     con.executemany(
         "INSERT INTO LOOKUPS (id, word_key, book_key, dict_key, pos, usage, timestamp)"
         " VALUES (?,?,?,'dict','POS:1',?,?)",
-        [(lid, wk, lid.split(":")[0], usage, ts) for lid, wk, usage, ts in QUERIES],
+        [(lid, wk, lid.split(":")[0], usage, ts) for lid, wk, usage, ts in LOOKUPS],
     )
     con.commit()
     con.close()
-    return DESTINATION
+    return FIXTURE_PATH
 
 
 if __name__ == "__main__":

@@ -43,32 +43,32 @@ class KindleVocabImporter:
     def checksum(self) -> str:
         h = hashlib.sha256()
         with self._path.open("rb") as f:
-            for bloque in iter(lambda: f.read(65536), b""):
-                h.update(bloque)
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
         return h.hexdigest()
 
     def read(self) -> Iterator[RawLookup]:
         # URI de solo lectura: el archivo del usuario nunca se modifica.
         uri = f"file:{self._path}?mode=ro"
-        conexion = sqlite3.connect(uri, uri=True)
-        conexion.row_factory = sqlite3.Row
+        connection = sqlite3.connect(uri, uri=True)
+        connection.row_factory = sqlite3.Row
         try:
-            for fila in conexion.execute(QUERY):
-                if fila["lang"] not in self._langs:
+            for row in connection.execute(QUERY):
+                if row["lang"] not in self._langs:
                     continue
-                if not fila["sentence"]:
+                if not row["sentence"]:
                     continue
                 yield RawLookup(
-                    external_id=fila["lookup_id"],
-                    word=fila["word"],
-                    lang=fila["lang"],
-                    sentence=fila["sentence"],
+                    external_id=row["lookup_id"],
+                    word=row["word"],
+                    lang=row["lang"],
+                    sentence=row["sentence"],
                     looked_up_at=datetime.fromtimestamp(
-                        fila["looked_up_ms"] / 1000, tz=UTC
+                        row["looked_up_ms"] / 1000, tz=UTC
                     ),
-                    source_hint=fila["stem"],
-                    book_title=fila["book_title"],
-                    book_lang=fila["book_lang"],
+                    source_hint=row["stem"],
+                    book_title=row["book_title"],
+                    book_lang=row["book_lang"],
                 )
         finally:
-            conexion.close()
+            connection.close()

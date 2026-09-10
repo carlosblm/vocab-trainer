@@ -29,6 +29,8 @@ LangGraph, FSRS, autenticación. No los introduzcas ni los prepares.
 - Toda configuración por variables de entorno. Cero rutas absolutas.
 - Decisión por defecto: **no usar un LLM**. Cada uso debe justificarse.
 - `vocab.db` real no se commitea nunca.
+- **Todo identificador en inglés**: variables, constantes, funciones, clases,
+  argumentos, nombres de test, tablas y columnas.
 
 ## Gestión de dependencias
 
