@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from sqlalchemy import func, select
 
 from vocab.adapters.kindle import KindleVocabImporter
+from vocab.adapters.nlp.normalizer import normalize
 from vocab.adapters.postgres.repository import PostgresVocabularyRepository
 from vocab.adapters.postgres.tables import ContextRow, EntryRow, SourceRow
 from vocab.application.import_vocabulary import import_vocabulary
@@ -31,12 +32,16 @@ def _count(session, table) -> int:
 def test_reimport_is_incremental(session):
     repository = PostgresVocabularyRepository(session)
 
-    first = import_vocabulary(KindleVocabImporter(OLD_DB), repository, "vocab.db")
+    first = import_vocabulary(
+        KindleVocabImporter(OLD_DB), repository, normalize, "vocab.db"
+    )
     session.flush()
     assert first.entries_created == 745
     assert first.contexts_created == 845
 
-    second = import_vocabulary(KindleVocabImporter(NEW_DB), repository, "vocab_new.db")
+    second = import_vocabulary(
+        KindleVocabImporter(NEW_DB), repository, normalize, "vocab_new.db"
+    )
     session.flush()
 
     assert second.entries_created == 159
@@ -50,10 +55,12 @@ def test_reimport_is_incremental(session):
 
 def test_reimporting_same_file_creates_nothing(session):
     repository = PostgresVocabularyRepository(session)
-    import_vocabulary(KindleVocabImporter(OLD_DB), repository, "vocab.db")
+    import_vocabulary(KindleVocabImporter(OLD_DB), repository, normalize, "vocab.db")
     session.flush()
 
-    again = import_vocabulary(KindleVocabImporter(OLD_DB), repository, "vocab.db")
+    again = import_vocabulary(
+        KindleVocabImporter(OLD_DB), repository, normalize, "vocab.db"
+    )
     assert again.entries_created == 0
     assert again.contexts_created == 0
     assert _count(session, SourceRow) == 1

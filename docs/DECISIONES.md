@@ -285,6 +285,64 @@ de la primera. Por tanto `entries.first_seen_at` se deriva de
 
 ---
 
+## D-013 · El ruido se filtra por lista cerrada, no por categoría gramatical
+
+**Fecha**: 2026-09-XX · **Fase**: F0
+
+**Decisión**: descartar una consulta si la palabra está en una lista corta de
+palabras funcionales por idioma, o si tiene menos de dos caracteres.
+
+**Descartado**: filtrar por la categoría gramatical que devuelve spaCy en
+contexto (`ADP`, `DET`, `PRON`...), que era la opción más potente.
+
+**Por qué**: el sentido del error. El filtro por categoría descarta en
+silencio vocabulario que el modelo etiquetó mal, y spaCy se equivoca más en
+frases cortas o mal puntuadas. La lista solo descarta lo que está escrito en
+ella y se audita abriendo el archivo.
+
+**Medición que corrigió la lista**: una primera versión con las palabras
+funcionales habituales descartaba 24 entradas, y al revisarlas una a una
+cuatro eran vocabulario legítimo: `beneath` (2 consultas), `neither`, `shall`
+y `although` (2). Son funcionales gramaticalmente, pero un hispanohablante de
+nivel intermedio las consulta a propósito. La lista se redujo al núcleo básico.
+
+También quedan fuera las funcionales con acepción de contenido: `even` aparece
+en el corpus dentro de «Never give roses in even numbers», donde significa
+*par*.
+
+**Resultado**: 17 palabras filtradas de 913; 24 consultas de 1.024 (2,3 %).
+
+**Revisión**: al añadir español (F7). `salvo` es preposición y verbo con la
+misma grafía, así que una lista no los distingue. Ahí puede hacer falta
+combinar lista con confirmación por categoría gramatical.
+
+---
+
+## D-014 · Estado de estudio por entrada, controlado por el usuario
+
+**Decisión**: `entries.status` con tres valores — `learning` (por defecto),
+`known` y `noise`. El selector de FSRS solo considera `learning`.
+
+**Descartado**: descartar el ruido en la ingesta, y confiar únicamente en FSRS
+para las palabras ya sabidas.
+
+**Por qué**: FSRS resuelve "ya la he aprendido" subiendo el intervalo tras
+varios aciertos, pero no resuelve "ya la sabía antes de empezar". 1.357 de
+1.505 palabras tienen una sola consulta, así que la curva arranca de cero para
+casi todo el corpus y el usuario tendría que fallar o acertar repetidamente
+para que el algoritmo se entere. Con 913 palabras en inglés, eso es fricción
+suficiente para abandonar.
+
+**Efecto sobre D-013**: el filtrado de ruido pasa de descartar a marcar.
+Equivocarse en la lista deja de ser destructivo: la entrada sigue ahí y el
+usuario puede rescatarla. Es el mismo principio de D-010 — no se destruye el
+dato de partida.
+
+**Alcance**: en F0 solo entra la columna. La interfaz para cambiar el estado
+es F3, con el resto de la interfaz.
+
+---
+
 ## Plantilla para nuevas entradas
 
 ```markdown

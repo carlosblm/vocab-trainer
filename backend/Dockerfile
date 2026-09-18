@@ -13,6 +13,9 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 
+# Libreria de spacy para la normalización.
+RUN uv sync --frozen && uv run python -m spacy download en_core_web_sm
+
 # Capa de código: cambia en cada commit
 COPY src/ ./src/
 RUN uv sync --frozen

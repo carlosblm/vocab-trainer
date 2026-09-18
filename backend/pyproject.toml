@@ -46,3 +46,4 @@ python_version = "3.12"
 mypy_path = "src"
 packages = ["vocab"]
 strict = true
+plugins = ["pydantic.mypy"]
