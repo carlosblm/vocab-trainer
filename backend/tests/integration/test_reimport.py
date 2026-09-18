@@ -29,6 +29,14 @@ def _count(session, table) -> int:
     return session.scalar(select(func.count()).select_from(table))
 
 
+def _count_truncated(session) -> int:
+    return session.scalar(
+        select(func.count())
+        .select_from(ContextRow)
+        .where(ContextRow.is_truncated.is_(True))
+    )
+
+
 def test_reimport_is_incremental(session):
     repository = PostgresVocabularyRepository(session)
 
@@ -36,19 +44,27 @@ def test_reimport_is_incremental(session):
         KindleVocabImporter(OLD_DB), repository, normalize, "vocab.db"
     )
     session.flush()
-    assert first.entries_created == 745
+
+    # Estas cifras dependen del lema que produce spaCy, no de un recuento de
+    # palabras en minúsculas: el número de entradas cambiará si cambia el
+    # modelo de spaCy o su versión (por ejemplo, "relied" y "rely" se
+    # fusionan en el lema "rely"). Que este test falle entonces es correcto:
+    # es información sobre el nuevo modelo, no una regresión, y hay que
+    # volver a medir y actualizar estos valores, nunca estimarlos.
+    assert first.entries_created == 716
     assert first.contexts_created == 845
+    assert _count_truncated(session) == 1
 
     second = import_vocabulary(
         KindleVocabImporter(NEW_DB), repository, normalize, "vocab_new.db"
     )
     session.flush()
 
-    assert second.entries_created == 159
-    assert second.entries_existing == 745
+    assert second.entries_created == 144
+    assert second.entries_existing == 716
     assert second.contexts_created == 179
 
-    assert _count(session, EntryRow) == 904
+    assert _count(session, EntryRow) == 860
     assert _count(session, ContextRow) == 1024
     assert _count(session, SourceRow) == 2
 
