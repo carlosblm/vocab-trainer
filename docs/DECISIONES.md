@@ -343,6 +343,62 @@ es F3, con el resto de la interfaz.
 
 ---
 
+## D-015 · La lematización se hace en contexto, no sobre la palabra aislada
+
+**Fase**: F0.4
+
+**Decisión**: el lema de cada entrada lo deriva spaCy analizando la palabra
+dentro de su frase de contexto, no la palabra por sí sola ni el campo `stem`
+del Kindle.
+
+**Descartado**: agrupar por la palabra en minúsculas (`word.lower()`), que era
+el lema provisional de F0.3, y fiarse de `WORDS.stem` (§4.1 del esquema: solo
+921 de 1.505 coinciden con `word`, y algunos añaden tildes inexistentes).
+
+**Medido sobre 845 consultas en inglés**: el lema de spaCy fusiona 30 grupos
+de formas flexionadas que el dedupe por minúsculas mantenía separadas
+(`enquiries`/`enquiry`, `crave`/`craved`, `eased`/`ease`), y **divide** un caso
+que el dedupe unía: `strained` recibe lema `strain` en una frase y `strained`
+en otra, verbo y adjetivo. Neto: 745 → 716 entradas.
+
+La división es el argumento a favor de lematizar en contexto: la palabra
+aislada no permite distinguir esos dos casos.
+
+**Primer límite: la fusión es morfológica, no semántica.** `bearing` y `bore`
+comparten lema y no significado. Es §5.4 apareciendo en la ingesta; no afecta
+a `cloze_original`, sí afectará a los distractores de A1 en F1.
+
+**Segundo límite: el lematizador se equivoca.** `en_core_web_sm` usa reglas de
+sufijo y falla con verbos cuyo infinitivo termina en `-e`. En el corpus,
+`waned` y `waning` reciben lema `wan` (pálido) en lugar de `wane` (menguar),
+con `pos_ = VERB` correcto en ambos: el fallo es del lematizador, no del
+etiquetador.
+
+La agrupación sigue siendo correcta —las dos formas caen en la misma entrada—,
+pero la **etiqueta** es errónea, y esa etiqueta es la que ve el usuario y la
+que irá al prompt de A1 en F1. No afecta a `cloze_original`, que tapa la
+palabra en su propia frase.
+
+**Incidencia sin acotar.** Se intentó medir cuántos casos como `wan` hay en el
+corpus y no se consiguió: la heurística probada (lemas cuya forma con `-e`
+aparece en el corpus) devolvió cinco candidatos, cuatro de ellos coincidencias
+ortográficas legítimas —`dim`/`dime`, `fin`/`fine`, `prim`/`prime`—, y dejó
+fuera el propio `wan`, porque `wane` nunca aparece suelto en el corpus. Sin un
+diccionario inglés disponible en el entorno no se pudo separar la señal del
+ruido. **Se sabe que ocurre; no se sabe con qué frecuencia.**
+
+**No se corrige en F0.** Un diccionario de excepciones a mano es mantenimiento
+sin fin, `en_core_web_lg` usa el mismo lematizador de reglas, y un LLM para
+lematizar contradice el principio por defecto (§5). Se revisa en F1 si los
+distractores se degradan por esto.
+
+**Revisión**: en F1, al medir la calidad de los distractores. Si el arnés
+detecta fallos atribuibles al lema, el número sale de ahí en lugar de una
+heurística sobre el corpus.
+
+---
+
+
 ## Plantilla para nuevas entradas
 
 ```markdown
