@@ -3,6 +3,15 @@ externas."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
+
+
+class EntryStatus(Enum):
+    """Estado de estudio de una entrada, controlado por el usuario (D-014)."""
+
+    LEARNING = "learning"
+    KNOWN = "known"
+    NOISE = "noise"
 
 
 @dataclass(frozen=True)
@@ -14,6 +23,7 @@ class Context:
     clean_sentence: str
     is_truncated: bool
     captured_at: datetime
+    pos: str | None = None
     book_title: str | None = None
     book_lang: str | None = None
 
@@ -34,8 +44,8 @@ class Entry:
     term: str
     lemma: str
     lang: str
-    pos: str | None = None
     external_id: str | None = None
+    status: EntryStatus = EntryStatus.LEARNING
     contexts: list[Context] = field(default_factory=list)
 
     @property

@@ -9,6 +9,7 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     String,
@@ -52,7 +53,12 @@ class EntryRow(Base):
     """Una palabra del vocabulario, deduplicada por (usuario, lema, idioma)."""
 
     __tablename__ = "entries"
-    __table_args__ = (UniqueConstraint("user_id", "lemma", "lang"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "lemma", "lang"),
+        CheckConstraint(
+            "status IN ('learning', 'known', 'noise')", name="status_valid"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     user_id: Mapped[int] = mapped_column(
@@ -65,7 +71,7 @@ class EntryRow(Base):
     term: Mapped[str] = mapped_column(String(120))
     lemma: Mapped[str] = mapped_column(String(120))
     lang: Mapped[str] = mapped_column(String(8), index=True)
-    pos: Mapped[str | None] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), server_default="learning")
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -83,6 +89,9 @@ class ContextRow(Base):
     raw_sentence: Mapped[str] = mapped_column(Text)
     clean_sentence: Mapped[str | None] = mapped_column(Text)
     is_truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # La categoría gramatical depende de la frase, no de la palabra
+    # (una misma palabra puede ser verbo en un libro y sustantivo en otro).
+    pos: Mapped[str | None] = mapped_column(String(16))
     book_title: Mapped[str | None] = mapped_column(String(500))
     book_lang: Mapped[str | None] = mapped_column(String(8))
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
