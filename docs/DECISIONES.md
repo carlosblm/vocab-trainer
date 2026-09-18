@@ -26,6 +26,9 @@ Este archivo es el material de entrevista del proyecto. Cuando pregunten "¿por 
 | D-010 | 2026-09-07 | Diseño | No completar frases con un modelo |
 | D-011 | 2026-09-08 | F0 | Bucle de desarrollo en `.venv`, artefacto en contenedor |
 | D-012 | 2026-09-09 | F0 | La reimportación es incremental y no toca el progreso |
+| D-013 | 2026-09-18 | F0 | El ruido se filtra por lista cerrada, no por categoría gramatical |
+| D-014 | 2026-09-18 | F0 | Estado de estudio por entrada, controlado por el usuario |
+| D-015 | 2026-09-18 | F0.4 | La lematización se hace en contexto, no sobre la palabra aislada |
 
 ---
 
@@ -355,11 +358,16 @@ del Kindle.
 el lema provisional de F0.3, y fiarse de `WORDS.stem` (§4.1 del esquema: solo
 921 de 1.505 coinciden con `word`, y algunos añaden tildes inexistentes).
 
-**Medido sobre 845 consultas en inglés**: el lema de spaCy fusiona 30 grupos
-de formas flexionadas que el dedupe por minúsculas mantenía separadas
-(`enquiries`/`enquiry`, `crave`/`craved`, `eased`/`ease`), y **divide** un caso
-que el dedupe unía: `strained` recibe lema `strain` en una frase y `strained`
-en otra, verbo y adjetivo. Neto: 745 → 716 entradas.
+**Medido sobre las 845 consultas en inglés de la exportación de agosto de
+2026**: el lema de spaCy fusiona 30 grupos de formas flexionadas que el
+dedupe por minúsculas mantenía separadas (`enquiries`/`enquiry`,
+`crave`/`craved`, `eased`/`ease`), y **divide** un caso que el dedupe unía:
+`strained` recibe lema `strain` en una frase y `strained` en otra, verbo y
+adjetivo. Neto: 745 → 716 entradas.
+
+Sobre las 1.024 consultas en inglés de la exportación de septiembre de 2026,
+el mismo efecto neto: 904 → 860 entradas. Son las cifras que usan los tests
+de integración.
 
 La división es el argumento a favor de lematizar en contexto: la palabra
 aislada no permite distinguir esos dos casos.

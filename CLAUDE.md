@@ -61,3 +61,8 @@ ni uses `pip install` directamente.
 - No amplíes el alcance. Si detectas que yo lo estoy ampliando, señálalo.
 - Un cambio por vez. No refactorices archivos que no te he pedido tocar.
 - Al terminar una tarea, muéstrame el resultado y para. No encadenes.
+- No edites `docs/` ni `DECISIONES.md` salvo que te lo pida explícitamente.
+  Son material de entrevista y van en mi voz.
+- Sí avísame cuando un cambio los deje desactualizados: una cifra que ya no
+  cuadra, una decisión nueva sin entrada, un campo del modelo de datos que
+  cambió. Dime qué archivo y qué apartado, y sigue con la tarea.

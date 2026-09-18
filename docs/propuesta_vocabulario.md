@@ -1,7 +1,7 @@
 # Propuesta técnica — Aplicación de estudio de vocabulario
 
 **Documento de contexto del proyecto**
-Autor: Carlos Blázquez Martín · Versión 1.5 · Septiembre 2026
+Autor: Carlos Blázquez Martín · Versión 1.6 · Septiembre 2026
 
 ---
 
@@ -260,11 +260,11 @@ Independiente de la fuente. Nombres orientativos.
 users            (id, created_at)
 sources   (id, user_id, kind, filename, checksum, imported_at)
           UNIQUE (user_id, checksum)
-entries   (id, user_id, source_id, external_id, term, lemma, lang, pos,
+entries   (id, user_id, source_id, external_id, term, lemma, lang, status,
            first_seen_at)
           UNIQUE (user_id, lemma, lang)
 contexts  (id, entry_id, external_id, raw_sentence, clean_sentence,
-           is_truncated, book_title, book_lang, captured_at)
+           is_truncated, pos, book_title, book_lang, captured_at)
           UNIQUE (entry_id, external_id)
 exercises        (id, entry_id, context_id, kind, lang, payload,
                   generator, model, prompt_version, validation_report, created_at)
@@ -278,6 +278,7 @@ Notas de diseño:
 - `user_id` está presente desde el principio aunque la v1 sea monousuario. Añadir autenticación después será una migración, no una reescritura.
 - `exercises` guarda `model` y `prompt_version` junto al ejercicio. Sin eso es imposible saber después qué configuración produjo qué resultado, y la evaluación pierde sentido.
 - `contexts` conserva la frase original **y** la limpia. Nunca se destruye el dato de partida.
+- `pos` vive en `contexts`, no en `entries`: la categoría gramatical depende de la frase donde aparece la palabra, no de la palabra en sí — la misma palabra puede ser verbo en un libro y sustantivo en otro. `entries.status` (`learning`/`known`/`noise`) sí es propiedad de la entrada, porque es el estado de estudio del usuario sobre esa palabra, no de una consulta concreta.
 - `external_id` guarda el identificador de la fuente (`en:resilient`, `LOOKUPS.id`). Es lo que hace idempotente la reimportación (D-012).
 - La ingesta no escribe nunca en `reviews` ni en `scheduling_state`. El progreso del usuario vive en tablas que la importación no toca, y esa separación es lo que hace segura la reimportación.
 

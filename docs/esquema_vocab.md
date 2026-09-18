@@ -146,6 +146,8 @@ Solo 921 de 1.505 registros tienen `stem` idéntico a `word`. En el resto, la le
 
 **Decisión de diseño**: usar `stem` como pista, pero **derivar el lema con spaCy** para tener consistencia y control. No fiarse del campo para deduplicar.
 
+**Capitalización.** `WORDS.id` conserva la capitalización original, así que `en:Hence` y `en:hence` son filas distintas. En el corpus inglés de septiembre hay 9 pares así (`Hence`/`hence`, `Biases`/`biases`, `VACUUM`/`vacuum`...): 913 filas → 904 palabras distintas.
+
 ### 4.2 `pos` no es *part of speech*
 
 Es el error más fácil de cometer, porque el nombre lo sugiere. El contenido real es `AYo4AADGBAAA:1402162`: un identificador de posición dentro del libro.
@@ -171,7 +173,7 @@ Lo bueno, verificado sobre 1.690 consultas:
 | Comillas de cierre (`”`, `’`, `»`) | 39 |
 | Sin puntuación reconocible | 31 (1,8 %) |
 
-De esas 31, 17 terminan en `[`: la frase está completa y lo que sobra es el inicio de una llamada a nota al pie del libro. **Frases realmente cortadas a mitad: unas 11 de 1.690** (0,7 %).
+De esas 31, 17 terminan en `[`: la frase está completa y lo que sobra es el inicio de una llamada a nota al pie del libro. **Frases realmente cortadas a mitad: unas 11 de 1.690** (0,7 %). De esas 11, solo **1 es inglesa** (`stirring`, en «...decision making The evidence is persuasive: activities»); las otras 10 son españolas.
 
 El trabajo de ingesta que esto exige es **limpieza de sufijo, no rescate de frases rotas**. El segmentador de spaCy queda como salvaguarda para esa decena de casos. **Nunca completar el texto que falta con un modelo**: no existe en la base de datos, así que solo se puede fabricar.
 
@@ -189,7 +191,9 @@ Sigue habiendo un único caso en las dos exportaciones, y no cambia entre ellas,
 
 Entre las palabras consultadas aparecen `En` y `Salvo`: pulsaciones involuntarias sobre palabras funcionales mientras se pasaba página.
 
-Hay que filtrarlas con listas de palabras vacías por idioma. Sin ese filtro, la aplicación pedirá estudiar preposiciones que el usuario ya conoce, y el usuario abandonará.
+Se marcan con una lista cerrada de palabras vacías por idioma (D-013): la entrada nace con `status = noise` en vez de descartarse (D-014), para que el usuario pueda rescatarla si la lista se equivoca. Sin este filtro, la aplicación pediría estudiar preposiciones que el usuario ya conoce.
+
+**Siglas partidas.** El Kindle guarda la letra tocada, no la sigla: `M&A` produce una consulta de `M`. spaCy tokeniza `M&A` como un único token, así que la búsqueda de la palabra consultada dentro de su frase no la localiza. Son 2 casos de 1.024 consultas en inglés, y el filtro de longitud mínima (D-013) ya los descarta sin necesidad de tratarlos aparte.
 
 ---
 
