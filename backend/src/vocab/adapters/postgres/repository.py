@@ -60,7 +60,7 @@ class PostgresVocabularyRepository:
                     term=entry.term,
                     lemma=entry.lemma,
                     lang=entry.lang,
-                    pos=entry.pos,
+                    status=entry.status.value,
                     first_seen_at=entry.first_seen_at,
                 )
                 .on_conflict_do_nothing(index_elements=["user_id", "lemma", "lang"])
@@ -89,6 +89,7 @@ class PostgresVocabularyRepository:
                         raw_sentence=context.raw_sentence,
                         clean_sentence=context.clean_sentence,
                         is_truncated=context.is_truncated,
+                        pos=context.pos,
                         book_title=context.book_title,
                         book_lang=context.book_lang,
                         captured_at=context.captured_at,

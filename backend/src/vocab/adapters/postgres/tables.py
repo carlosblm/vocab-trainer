@@ -89,8 +89,6 @@ class ContextRow(Base):
     raw_sentence: Mapped[str] = mapped_column(Text)
     clean_sentence: Mapped[str | None] = mapped_column(Text)
     is_truncated: Mapped[bool] = mapped_column(Boolean, default=False)
-    # La categoría gramatical depende de la frase, no de la palabra
-    # (una misma palabra puede ser verbo en un libro y sustantivo en otro).
     pos: Mapped[str | None] = mapped_column(String(16))
     book_title: Mapped[str | None] = mapped_column(String(500))
     book_lang: Mapped[str | None] = mapped_column(String(8))
