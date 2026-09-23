@@ -15,6 +15,38 @@ Monorepo. El backend vive en `backend/`, con `src-layout`: el paquete es
 `vocab` y su raíz es `backend/src/vocab/`. Las rutas de las reglas duras se
 entienden desde ahí. `frontend/` está vacío hasta F3.
 
+## Arquitectura
+
+Hexagonal. Las dependencias apuntan siempre hacia el dominio.
+
+| Capa | Qué contiene | Puede importar de |
+|---|---|---|
+| `domain/` | Entidades y reglas de negocio | Solo biblioteca estándar |
+| `ports/` | Contratos (`Protocol`) y objetos de transferencia | `domain/` |
+| `application/` | Casos de uso: orquestan dominio y puertos | `domain/`, `ports/` |
+| `adapters/` | Implementaciones de los puertos (Kindle, Postgres, spaCy) | `domain/`, `ports/` |
+| `cli/` | Adaptador de entrada y raíz de composición | Todas |
+
+`cli/` es el único sitio donde se instancian los adaptadores concretos y se
+inyectan en los casos de uso. Si un cambio obliga a romper una de estas
+reglas, dímelo antes de hacerlo.
+
+## Modo de aprendizaje
+
+Uso este proyecto para aprender. Cada tarea viene marcada:
+
+- **[aprender]**: no escribas el código. Explícame qué hay que hacer, qué
+  archivos tocar y qué preguntas tengo que resolver, sin darme las respuestas.
+  Yo lo escribo y tú lo revisas con crítica: dime qué está mal y por qué, sin
+  darme la versión corregida salvo que te la pida.
+- **[delegar]**: escríbelo tú, y explícame paso a paso qué hace y por qué
+  está así.
+
+En ambos casos, al empezar y al terminar, explícame el flujo completo de la
+funcionalidad a través de las capas: por dónde entra, qué capa llama a cuál y
+qué tipo cruza cada frontera, citando archivo y función reales del
+repositorio. Si una tarea no viene marcada, pregunta.
+
 ## Alcance
 
 El proyecto avanza por fases (§9 de la propuesta). Antes de escribir nada,
