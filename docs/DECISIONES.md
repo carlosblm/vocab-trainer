@@ -29,6 +29,9 @@ Este archivo es el material de entrevista del proyecto. Cuando pregunten "¿por 
 | D-013 | 2026-09-18 | F0 | El ruido se filtra por lista cerrada, no por categoría gramatical |
 | D-014 | 2026-09-18 | F0 | Estado de estudio por entrada, controlado por el usuario |
 | D-015 | 2026-09-18 | F0.4 | La lematización se hace en contexto, no sobre la palabra aislada |
+| D-016 | 2026-09-23 | F0.4 | La normalización entra por un puerto, no por tipos del adaptador |
+| D-017 | 2026-09-23 | F0.4 | La dirección de las dependencias la verifica import-linter |
+| D-018 | 2026-09-23 | F0.4 | El estado inicial lo decide la palabra consultada, no el conjunto de sus formas |
 
 ---
 
@@ -290,7 +293,7 @@ de la primera. Por tanto `entries.first_seen_at` se deriva de
 
 ## D-013 · El ruido se filtra por lista cerrada, no por categoría gramatical
 
-**Fecha**: 2026-09-XX · **Fase**: F0
+**Fecha**: 2026-09-18 · **Fase**: F0
 
 **Decisión**: descartar una consulta si la palabra está en una lista corta de
 palabras funcionales por idioma, o si tiene menos de dos caracteres.
@@ -406,6 +409,170 @@ heurística sobre el corpus.
 
 ---
 
+
+## D-016 · La normalización entra por un puerto, no por tipos del adaptador
+
+**Fecha**: 2026-09-23 · **Fase**: F0.4
+
+**Decisión**: un tercer puerto en `ports/normalizer.py`, con sus dos objetos de
+transferencia —`CleanedLookup` a la entrada, `NormalizedWord` a la salida— y un
+contrato `Callable`. El adaptador de spaCy lo implementa; el caso de uso solo
+conoce el puerto.
+
+**Descartado**: dejar el alias `Normalizer` en `application/`, escrito con tipos
+que pertenecían al adaptador de spaCy. Era lo que había.
+
+**Por qué**: la capa de aplicación importaba de `adapters/nlp/`, así que
+importar el caso de uso arrastraba `import spacy`. El test unitario del caso de
+uso —cuyo docstring prometía «sin base de datos y sin spaCy»— tardaba **0,47 s**
+frente a los **0,01 s** de los demás tests unitarios. La violación de la
+arquitectura no era una objeción de estilo: tenía un coste medible, y el
+docstring era falso a medias. Tras el cambio ese test tarda 0,01 s y no carga un
+solo módulo de spaCy.
+
+**Tres decisiones derivadas**:
+
+- **`Callable` y no `Protocol`.** Una normalización no tiene estado que
+  inyectar, a diferencia de `VocabularyImporter` (ruta, idiomas) y
+  `VocabularyRepository` (sesión). Exigir una clase obligaría al adaptador a
+  envolver una función en un objeto vacío.
+- **Un tipo reducido en lugar de `RawLookup`.** El puerto declara lo que
+  consume: palabra, idioma, frase limpia y una clave de correlación. Ni el libro
+  ni la fecha, que no usa. **Coste aceptado**: el caso de uso tiene que
+  correlacionar los resultados por `external_id` en vez de recibir de vuelta la
+  consulta entera.
+- **`pos: str | None` en lugar de `"X"`.** `X` es una etiqueta legítima de
+  Universal POS —«otro»: extranjerismos, erratas, símbolos—, así que usar un
+  valor posible como marca de ausencia confunde «no encontré la palabra en la
+  frase» con «la encontré y es de categoría desconocida». Medido sobre las 1.024
+  consultas en inglés de la exportación de septiembre de 2026: el recuento de no
+  resueltos no se mueve —2 con cualquiera de los dos criterios— porque en este
+  corpus ningún token localizado recibe `X`. **El número no cambia; el
+  significado sí.** Era un falso positivo latente que el corpus no llega a
+  disparar.
+
+**Amplía la arquitectura descrita**: §3.3.2 de la propuesta solo contempla
+`VocabularyImporter` como puerto. Con este son tres.
+
+**Revisión**: el contrato tiene una sola implementación, así que su capacidad
+real de abstraer está sin verificar. El primer examen llega con un segundo
+normalizador: el español en F7, o cualquier sustituto de spaCy.
+
+---
+
+## D-017 · La dirección de las dependencias la verifica import-linter, no mi memoria
+
+**Fecha**: 2026-09-23 · **Fase**: F0.4
+
+**Decisión**: declarar las capas como un contrato de `import-linter` en
+`pyproject.toml` y ejecutarlo junto a `ruff` y `mypy`.
+
+**Descartado**: un test propio que recorriera las importaciones con `ast`, y
+confiar en la revisión manual.
+
+**Por qué**: mypy en modo estricto y ruff con `E, F, I, B, UP` pasaban los **24
+archivos** con la violación dentro: `application/import_vocabulary.py` importaba
+de `adapters/nlp/` en tres líneas. Ninguna de las dos herramientas mira la
+dirección de las importaciones, así que la tabla de capas se sostenía únicamente
+sobre que yo me acordara de leerla.
+
+**El delimitador es lo que más vale de la configuración**:
+
+| Sintaxis | Significado |
+|---|---|
+| `a : b` | hermanos que **pueden** importarse entre sí |
+| `a \| b` | hermanos **independientes**: ninguno puede importar al otro |
+
+`adapters` y `application` necesitan `|`. Con `:` el contrato permitiría
+`adapters → application`, que es una arquitectura en capas y no hexagonal. La
+diferencia entre las dos cabe en un solo carácter del fichero de configuración.
+
+**El método importa tanto como el resultado**: el guardián se configuró **antes**
+de arreglar nada y se comprobó que fallaba señalando las tres líneas exactas.
+Después se inyectó a propósito la violación contraria —un import de
+`adapters` hacia `application`— para verificar que vigilaba los dos sentidos y
+no solo uno. Un guardián al que no se ha visto fallar no es un guardián.
+
+**Segundo contrato**, de tipo `forbidden`: recoge la primera fila de la tabla,
+`domain/` no importa nada de terceros.
+
+**Estado de la verificación**: hoy se ejecuta a mano junto a `ruff` y `mypy`.
+Entra en la CI con el resto, con el mismo riesgo asumido que D-011: mientras la
+CI no esté operativa, la garantía depende de acordarse de ejecutarlo.
+
+**Arreglo incluido en el mismo cambio, sin entrada propia**: se borró
+`adapters/postgres/session.py`, que construía el motor de SQLAlchemy al
+importarse y contradecía la regla de que las dependencias entran por parámetro.
+No lo usaba nadie —los tests de integración ya construían su propio motor—, así
+que el borrado no obligó a tocar ninguna otra cosa.
+
+---
+
+## D-018 · El estado inicial lo decide la palabra consultada, no el conjunto de sus formas
+
+**Fecha**: 2026-09-23 · **Fase**: F0.4
+
+**Decisión**: la regla de ruido completa vive en el dominio. `Entry.new` recibe
+un `LookedUpWord` —la palabra tal como se consultó y su idioma— y decide con qué
+estado nace la entrada. La regla es a nivel de palabra: no mira las demás formas
+que comparten lema.
+
+**Descartado**:
+
+- **Dejar la agregación en la capa de aplicación.** Era lo que había: una
+  función que marcaba `noise` solo si **todas** las consultas del grupo lo eran.
+  La mitad de la regla de D-013 y D-014 vivía fuera del dominio, donde ningún
+  test podía alcanzarla sin montar el caso de uso entero.
+- **Hacer del estado una propiedad calculada de `Entry`.** Choca de frente con
+  D-014: el estado lo controla el usuario y una propiedad no se puede
+  sobrescribir. El estado se calcula **al nacer** y nunca más. El constructor
+  normal sigue aceptando cualquier valor, que es como el repositorio reconstruye
+  una entrada guardada con el `known` que puso el usuario.
+
+**Por qué a nivel de palabra**: dentro de un grupo el idioma es constante —la
+identidad de una entrada es `(lemma, lang)`— y la lista de D-013 se consulta
+sobre la forma consultada, no sobre el lema.
+
+**Qué cambia, medido sobre las dos exportaciones**:
+
+| Exportación | Entradas | Con más de una forma | `noise` con la regla vieja | `noise` con la nueva |
+|---|---|---|---|---|
+| agosto 2026 | 716 | 35 | 13 | 13 |
+| septiembre 2026 | 860 | 51 | 14 | 14 |
+
+**Ninguna entrada cambia de estado.** Pero las dos reglas no son equivalentes, y
+conviene dejar escrito qué se perdió.
+
+**Límite reconocido: desaparece el rescate por consulta deliberada.** Antes,
+una sola consulta de vocabulario real entre varias accidentales bastaba para que
+la entrada naciera `learning`. Ahora decide la consulta más antigua. El caso
+donde difiere es alcanzable, comprobado con el modelo real:
+
+```
+doing    lema=do      en la lista de ruido: False
+do       lema=do      en la lista de ruido: True
+having   lema=have    en la lista de ruido: False
+have     lema=have    en la lista de ruido: True
+```
+
+`do` y `doing` caen en la misma entrada. Si `do` se consultó antes, la entrada
+nace `noise` y la consulta deliberada de `doing` deja de verse. Ocurre porque la
+lista de D-013 es cerrada y contiene formas base, mientras que la agrupación es
+por lema (D-015): una flexión que no está en la lista puede compartir lema con
+una que sí está. No ocurre en el corpus actual; puede ocurrir.
+
+**La dependencia circular y cómo se evitó**: `domain/noise.py` no importa
+`domain/models.py`. Para eso, `is_noise` devuelve `bool` y no `EntryStatus`, y
+`LookedUpWord` vive en `noise.py`. El mapeo a `EntryStatus` lo hace `Entry.new`.
+El ciclo lo cerraban las dos direcciones, no solo el tipo de retorno: si el
+objeto de valor hubiera vivido en `models.py`, la regla habría tenido que
+importarlo para recibirlo.
+
+**Revisión**: cuando la interfaz de F3 permita cambiar el estado a mano. Si
+rescatar entradas resulta frecuente, el rescate automático vuelve a la mesa con
+datos de uso en lugar de con un caso construido.
+
+---
 
 ## Plantilla para nuevas entradas
 

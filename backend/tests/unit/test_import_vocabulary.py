@@ -1,13 +1,16 @@
 """Prueba el caso de uso `import_vocabulary` con dobles de los tres puertos:
 sin base de datos y sin spaCy.
+
+Este módulo no importa nada de `vocab.adapters`. Si alguna vez hiciera falta,
+sería señal de que un puerto está incompleto.
 """
 
 from datetime import UTC, datetime
 
-from vocab.adapters.nlp.normalizer import CleanedLookup, NormalizedWord
 from vocab.application.import_vocabulary import import_vocabulary
 from vocab.domain.models import Entry, EntryStatus
 from vocab.ports.importer import RawLookup
+from vocab.ports.normalizer import CleanedLookup, NormalizedWord, Normalizer
 from vocab.ports.repository import ImportStats
 
 
@@ -56,11 +59,23 @@ def _lookup(word: str, external_id: str, sentence: str, when: datetime) -> RawLo
     )
 
 
-def _fake_normalizer(lemmas: dict[str, NormalizedWord]):
-    """Normalizador falso: lema y pos fijos por palabra, sin spaCy."""
+def _fake_normalizer(
+    analysis_by_word: dict[str, tuple[str, str | None]],
+    reverse: bool = False,
+) -> Normalizer:
+    """Normalizador falso: (lema, categoría) fijos por palabra, sin spaCy.
 
-    def normalizer(cleaned_lookups: list[CleanedLookup]):
-        return [(item.lookup, lemmas[item.lookup.word]) for item in cleaned_lookups]
+    `reverse` devuelve los resultados en orden inverso al de entrada. El
+    puerto no promete orden, así que un doble que lo altera es legítimo.
+    """
+
+    def normalizer(cleaned_lookups: list[CleanedLookup]) -> list[NormalizedWord]:
+        lemma_and_pos = (analysis_by_word[item.word] for item in cleaned_lookups)
+        result = [
+            NormalizedWord(external_id=item.external_id, lemma=lemma, pos=pos)
+            for item, (lemma, pos) in zip(cleaned_lookups, lemma_and_pos, strict=True)
+        ]
+        return result[::-1] if reverse else result
 
     return normalizer
 
@@ -73,10 +88,7 @@ def test_two_forms_sharing_lemma_produce_one_entry_with_two_contexts():
         _lookup("rely", "l2", "I rely on you.", datetime(2026, 1, 1, tzinfo=UTC)),
     ]
     normalizer = _fake_normalizer(
-        {
-            "relied": NormalizedWord(lemma="rely", pos="VERB", tag="VBD"),
-            "rely": NormalizedWord(lemma="rely", pos="VERB", tag="VBP"),
-        }
+        {"relied": ("rely", "VERB"), "rely": ("rely", "VERB")}
     )
     repository = FakeRepository()
 
@@ -89,41 +101,18 @@ def test_two_forms_sharing_lemma_produce_one_entry_with_two_contexts():
     assert {c.external_id for c in entry.contexts} == {"l1", "l2"}
 
 
-def test_group_where_every_lookup_is_noise_gets_noise_status():
+def test_looked_up_word_reaches_the_domain_rule():
+    """No prueba la regla —eso es `test_entry.py`— sino que el caso de uso le
+    entrega la palabra consultada y su idioma."""
     lookups = [
         _lookup("the", "l1", "The bridge held.", datetime(2026, 1, 1, tzinfo=UTC))
     ]
-    normalizer = _fake_normalizer(
-        {"the": NormalizedWord(lemma="the", pos="DET", tag="DT")}
-    )
+    normalizer = _fake_normalizer({"the": ("the", "DET")})
     repository = FakeRepository()
 
     import_vocabulary(FakeImporter(lookups), repository, normalizer, "fake.db")
 
     assert repository.entries[0].status is EntryStatus.NOISE
-
-
-def test_group_with_one_real_lookup_among_noise_gets_learning_status():
-    # Lema compartido a propósito: el normalizador es falso, así que puede
-    # agrupar "the" y "resilient" bajo el mismo lema para aislar la regla de
-    # agregación de _entry_status de la lematización real de spaCy.
-    lookups = [
-        _lookup("the", "l1", "The bridge held.", datetime(2026, 1, 1, tzinfo=UTC)),
-        _lookup(
-            "resilient", "l2", "It proved resilient.", datetime(2026, 1, 2, tzinfo=UTC)
-        ),
-    ]
-    normalizer = _fake_normalizer(
-        {
-            "the": NormalizedWord(lemma="shared", pos="DET", tag="DT"),
-            "resilient": NormalizedWord(lemma="shared", pos="ADJ", tag="JJ"),
-        }
-    )
-    repository = FakeRepository()
-
-    import_vocabulary(FakeImporter(lookups), repository, normalizer, "fake.db")
-
-    assert repository.entries[0].status is EntryStatus.LEARNING
 
 
 def test_context_pos_belongs_to_its_own_lookup_not_the_first():
@@ -134,10 +123,7 @@ def test_context_pos_belongs_to_its_own_lookup_not_the_first():
         _lookup("rely", "l2", "I rely on you.", datetime(2026, 1, 2, tzinfo=UTC)),
     ]
     normalizer = _fake_normalizer(
-        {
-            "relied": NormalizedWord(lemma="rely", pos="VERB", tag="VBD"),
-            "rely": NormalizedWord(lemma="rely", pos="NOUN", tag="NN"),
-        }
+        {"relied": ("rely", "VERB"), "rely": ("rely", "NOUN")}
     )
     repository = FakeRepository()
 
@@ -147,12 +133,42 @@ def test_context_pos_belongs_to_its_own_lookup_not_the_first():
     assert pos_by_context == {"l1": "VERB", "l2": "NOUN"}
 
 
+def test_results_are_paired_by_key_not_by_position():
+    """El puerto no garantiza orden: reemparejar por posición asignaría el
+    `pos` de una consulta a la otra."""
+    lookups = [
+        _lookup(
+            "relied", "l1", "She relied on luck.", datetime(2026, 1, 1, tzinfo=UTC)
+        ),
+        _lookup("rely", "l2", "I rely on you.", datetime(2026, 1, 2, tzinfo=UTC)),
+    ]
+    normalizer = _fake_normalizer(
+        {"relied": ("rely", "VERB"), "rely": ("rely", "NOUN")}, reverse=True
+    )
+    repository = FakeRepository()
+
+    import_vocabulary(FakeImporter(lookups), repository, normalizer, "fake.db")
+
+    pos_by_context = {c.external_id: c.pos for c in repository.entries[0].contexts}
+    assert pos_by_context == {"l1": "VERB", "l2": "NOUN"}
+
+
+def test_unresolved_word_keeps_its_context_with_no_pos():
+    lookups = [
+        _lookup("thole", "l1", "He held the thole.", datetime(2026, 1, 1, tzinfo=UTC))
+    ]
+    normalizer = _fake_normalizer({"thole": ("thole", None)})
+    repository = FakeRepository()
+
+    import_vocabulary(FakeImporter(lookups), repository, normalizer, "fake.db")
+
+    assert repository.entries[0].contexts[0].pos is None
+
+
 def test_raw_and_clean_sentence_are_preserved():
     dirty = "It proved resilient.[59] "
     lookups = [_lookup("resilient", "l1", dirty, datetime(2026, 1, 1, tzinfo=UTC))]
-    normalizer = _fake_normalizer(
-        {"resilient": NormalizedWord(lemma="resilient", pos="ADJ", tag="JJ")}
-    )
+    normalizer = _fake_normalizer({"resilient": ("resilient", "ADJ")})
     repository = FakeRepository()
 
     import_vocabulary(FakeImporter(lookups), repository, normalizer, "fake.db")

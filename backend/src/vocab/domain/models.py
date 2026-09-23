@@ -4,6 +4,9 @@ externas."""
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Self
+
+from vocab.domain.noise import LookedUpWord, is_noise
 
 
 class EntryStatus(Enum):
@@ -47,6 +50,30 @@ class Entry:
     external_id: str | None = None
     status: EntryStatus = EntryStatus.LEARNING
     contexts: list[Context] = field(default_factory=list)
+
+    @classmethod
+    def new(
+        cls,
+        word: LookedUpWord,
+        lemma: str,
+        external_id: str | None,
+        contexts: list[Context],
+    ) -> Self:
+        """Crea una entrada descubierta ahora y decide con qué estado nace.
+
+        Reconstruir una entrada ya guardada no pasa por aquí: usa el
+        constructor normal, que acepta cualquier estado. El `known` que puso el
+        usuario tiene que sobrevivir a la reimportación (D-014), así que el
+        estado solo se calcula la primera vez que se ve la palabra.
+        """
+        return cls(
+            term=word.text,
+            lemma=lemma,
+            lang=word.lang,
+            external_id=external_id,
+            status=EntryStatus.NOISE if is_noise(word) else EntryStatus.LEARNING,
+            contexts=contexts,
+        )
 
     @property
     def identity(self) -> tuple[str, str]:

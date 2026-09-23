@@ -22,6 +22,7 @@ dev = [
     "ruff",
     "mypy",
     "testcontainers[postgresql]>=4.15.0",
+    "import-linter>=2.15",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -47,3 +48,35 @@ mypy_path = "src"
 packages = ["vocab"]
 strict = true
 plugins = ["pydantic.mypy"]
+
+[tool.importlinter]
+root_package = "vocab"
+# Necesario para que el contrato `forbidden` vea paquetes que no son `vocab`.
+include_external_packages = true
+
+# Las capas, de la más externa a la más interna. `|` marca hermanos
+# independientes: ni `adapters` puede importar de `application` ni al revés.
+# Es la regla que distingue una arquitectura hexagonal de una en capas.
+[[tool.importlinter.contracts]]
+name = "Las dependencias apuntan siempre hacia el dominio"
+type = "layers"
+layers = [
+    "vocab.cli",
+    "vocab.adapters | vocab.application",
+    "vocab.ports",
+    "vocab.domain",
+]
+
+# La fila `domain` de la tabla: solo biblioteca estándar.
+[[tool.importlinter.contracts]]
+name = "El dominio no importa nada de terceros"
+type = "forbidden"
+source_modules = ["vocab.domain"]
+forbidden_modules = [
+    "sqlalchemy",
+    "spacy",
+    "pydantic",
+    "pydantic_settings",
+    "alembic",
+    "psycopg",
+]

@@ -1,18 +1,47 @@
 """Caso de uso: importar vocabulario desde una fuente."""
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import datetime
 
-from vocab.adapters.nlp.cleaning import clean_sentence, is_truncated
-from vocab.adapters.nlp.noise import is_noise
-from vocab.adapters.nlp.normalizer import CleanedLookup, NormalizedWord
-from vocab.domain.models import Context, Entry, EntryStatus
+from vocab.domain.cleaning import CleanSentence, clean_sentence, is_truncated
+from vocab.domain.models import Context, Entry
+from vocab.domain.noise import LookedUpWord
 from vocab.ports.importer import RawLookup, VocabularyImporter
+from vocab.ports.normalizer import CleanedLookup, NormalizedWord, Normalizer
 from vocab.ports.repository import ImportStats, VocabularyRepository
 
-# El normalizador entra por parámetro para poder sustituirlo en los tests
-# por uno falso, sin cargar spaCy.
-Normalizer = Callable[[list[CleanedLookup]], list[tuple[RawLookup, NormalizedWord]]]
+
+@dataclass(frozen=True)
+class _AnalyzedLookup:
+    """Una consulta con todo lo que se sabe de ella: como llegó de la fuente,
+    su frase ya limpia y el análisis del normalizador.
+
+    Las propiedades dan nombre propio a lo que define una entrada —el término
+    consultado, su idioma, cuándo se consultó—, para que agrupar y decidir el
+    estado no dependan de en cuál de las tres piezas vive cada dato.
+    """
+
+    lookup: RawLookup
+    clean_sentence: CleanSentence
+    analysis: NormalizedWord
+
+    @property
+    def term(self) -> str:
+        return self.lookup.word
+
+    @property
+    def lang(self) -> str:
+        return self.lookup.lang
+
+    @property
+    def looked_up_at(self) -> datetime:
+        return self.lookup.looked_up_at
+
+    @property
+    def identity(self) -> tuple[str, str]:
+        return (self.analysis.lemma, self.lang)
 
 
 def import_vocabulary(
@@ -35,69 +64,62 @@ def import_vocabulary(
 def _build_entries(lookups: Iterable[RawLookup], normalizer: Normalizer) -> list[Entry]:
     """Limpia, normaliza y agrupa las consultas en entradas.
 
-    El orden importa: la limpieza va antes que spaCy porque el segmentador
-    se atraganta con las notas al pie, y la lematización va antes que la
-    agrupación porque la identidad de una entrada es su lema.
+    El orden importa: la limpieza va antes que la normalización porque el
+    segmentador se atraganta con las notas al pie, y la normalización va antes
+    que la agrupación porque la identidad de una entrada es su lema.
+
+    El normalizador recibe un tipo reducido y devuelve los resultados en
+    cualquier orden, así que se indexan por `external_id` para recomponer cada
+    consulta con lo que no le hemos dado: la frase cruda, el libro y la fecha.
     """
+    raw_by_id = {lookup.external_id: lookup for lookup in lookups}
+    cleaned_lookups = [
+        CleanedLookup(
+            external_id=lookup.external_id,
+            word=lookup.word,
+            lang=lookup.lang,
+            clean_sentence=clean_sentence(lookup.sentence),
+        )
+        for lookup in raw_by_id.values()
+    ]
+    analysis_by_id = {
+        analysis.external_id: analysis for analysis in normalizer(cleaned_lookups)
+    }
+    analyzed = [
+        _AnalyzedLookup(
+            lookup=raw_by_id[cleaned.external_id],
+            clean_sentence=cleaned.clean_sentence,
+            analysis=analysis_by_id[cleaned.external_id],
+        )
+        for cleaned in cleaned_lookups
+    ]
 
-    cleaned_by_lookup: dict[str, str] = {}
-    cleaned_lookups: list[CleanedLookup] = []
-    for lookup in lookups:
-        cleaned = clean_sentence(lookup.sentence)
-        cleaned_by_lookup[lookup.external_id] = cleaned
-        cleaned_lookups.append(CleanedLookup(cleaned, lookup))
-
-    normalized = normalizer(cleaned_lookups)
-
-    grouped: dict[tuple[str, str], list[tuple[RawLookup, NormalizedWord]]] = (
-        defaultdict(list)
-    )
-    for lookup, word in normalized:
-        grouped[(word.lemma, lookup.lang)].append((lookup, word))
+    grouped: dict[tuple[str, str], list[_AnalyzedLookup]] = defaultdict(list)
+    for item in analyzed:
+        grouped[item.identity].append(item)
 
     entries = []
     for (lemma, lang), group in grouped.items():
-        first_lookup = min(group, key=lambda pair: pair[0].looked_up_at)[0]
+        first = min(group, key=lambda item: item.looked_up_at)
         entries.append(
-            Entry(
-                term=first_lookup.word,
+            Entry.new(
+                word=LookedUpWord(text=first.term, lang=lang),
                 lemma=lemma,
-                lang=lang,
                 external_id=f"{lang}:{lemma}",
-                status=_entry_status(group),
-                contexts=[
-                    _to_context(lookup, word, cleaned_by_lookup[lookup.external_id])
-                    for lookup, word in group
-                ],
+                contexts=[_to_context(item) for item in group],
             )
         )
     return entries
 
 
-def _entry_status(
-    group: list[tuple[RawLookup, NormalizedWord]],
-) -> EntryStatus:
-    """El ruido ya no se descarta, se marca (D-014): la entrada nace `noise`
-    en vez de perderse, y el usuario puede rescatarla.
-
-    Una entrada agrupa todas las consultas de un mismo lema. Si una sola
-    consulta es vocabulario deliberado, la entrada entera nace `learning`:
-    basta una lectura atenta entre varias accidentales para que la palabra
-    merezca estudiarse.
-    """
-    if all(is_noise(lookup.word, lookup.lang) for lookup, _ in group):
-        return EntryStatus.NOISE
-    return EntryStatus.LEARNING
-
-
-def _to_context(lookup: RawLookup, word: NormalizedWord, cleaned: str) -> Context:
+def _to_context(item: _AnalyzedLookup) -> Context:
     return Context(
-        external_id=lookup.external_id,
-        raw_sentence=lookup.sentence,
-        clean_sentence=cleaned,
-        is_truncated=is_truncated(cleaned),
-        captured_at=lookup.looked_up_at,
-        pos=word.pos,
-        book_title=lookup.book_title,
-        book_lang=lookup.book_lang,
+        external_id=item.lookup.external_id,
+        raw_sentence=item.lookup.sentence,
+        clean_sentence=item.clean_sentence,
+        is_truncated=is_truncated(item.clean_sentence),
+        captured_at=item.looked_up_at,
+        pos=item.analysis.pos,
+        book_title=item.lookup.book_title,
+        book_lang=item.lookup.book_lang,
     )

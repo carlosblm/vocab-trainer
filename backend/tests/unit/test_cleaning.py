@@ -1,4 +1,4 @@
-from vocab.adapters.nlp.cleaning import clean_sentence, is_truncated
+from vocab.domain.cleaning import clean_sentence, is_truncated
 
 
 def test_keeps_final_period_before_footnote_bracket():

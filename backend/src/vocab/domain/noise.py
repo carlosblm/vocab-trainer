@@ -22,6 +22,21 @@ Prefiere colar ruido, que el usuario ignora en un repaso, a perder vocabulario
 que quería estudiar y que desaparecería sin dejar rastro.
 """
 
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class LookedUpWord:
+    """Una palabra tal como el lector la consultó, en el idioma en que la leyó.
+
+    No es el lema: es la forma que quedó registrada al tocar la pantalla, y es
+    sobre ella que se decide si la consulta fue deliberada o un accidente.
+    """
+
+    text: str
+    lang: str
+
+
 STOPWORDS: dict[str, frozenset[str]] = {
     "en": frozenset(
         {
@@ -114,9 +129,9 @@ STOPWORDS: dict[str, frozenset[str]] = {
 MIN_LENGTH = 2
 
 
-def is_noise(word: str, lang: str) -> bool:
+def is_noise(word: LookedUpWord) -> bool:
     """Si la palabra consultada es una pulsación accidental, no vocabulario."""
-    cleaned = word.strip()
-    if len(cleaned) < MIN_LENGTH:
+    text = word.text.strip()
+    if len(text) < MIN_LENGTH:
         return True
-    return cleaned.lower() in STOPWORDS.get(lang, frozenset())
+    return text.lower() in STOPWORDS.get(word.lang, frozenset())
