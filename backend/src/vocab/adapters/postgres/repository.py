@@ -86,6 +86,7 @@ class PostgresVocabularyRepository:
                     .values(
                         entry_id=entry_id,
                         external_id=context.external_id,
+                        term=context.term,
                         raw_sentence=context.raw_sentence,
                         clean_sentence=context.clean_sentence,
                         is_truncated=context.is_truncated,

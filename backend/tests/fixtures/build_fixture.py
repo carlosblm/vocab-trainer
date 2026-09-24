@@ -30,6 +30,7 @@ WORDS = [
     ("en:stake", "stake", "stake", "en", 1_700_000_300_000),
     ("en:brow", "brow", "brow ()", "en", 1_700_000_400_000),
     ("es:salvo", "Salvo", "salvo", "es", 1_700_000_500_000),
+    ("en:rely", "rely", "rely", "en", 1_700_000_600_000),
 ]
 
 # (lookup_id, word_key, book_key, usage, ts)  — ts crecientes por palabra
@@ -79,6 +80,14 @@ LOOKUPS = [
         "es:salvo",
         "Salvo los internados en un manicomio, nadie protestó.",
         1_700_000_500_000,
+    ),
+    # otra forma del lema de `relied`, consultada después: la entrada guarda
+    # `relied` como término y este contexto conserva `rely` (D-020)
+    (
+        "CR!BOOK1:8",
+        "en:rely",
+        "You can rely on the tide tables.",
+        1_700_000_600_000,
     ),
 ]
 

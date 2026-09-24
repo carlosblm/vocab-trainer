@@ -115,6 +115,7 @@ def _build_entries(lookups: Iterable[RawLookup], normalizer: Normalizer) -> list
 def _to_context(item: _AnalyzedLookup) -> Context:
     return Context(
         external_id=item.lookup.external_id,
+        term=item.term,
         raw_sentence=item.lookup.sentence,
         clean_sentence=item.clean_sentence,
         is_truncated=is_truncated(item.clean_sentence),

@@ -19,9 +19,17 @@ class EntryStatus(Enum):
 
 @dataclass(frozen=True)
 class Context:
-    """La frase de un libro donde apareció una palabra."""
+    """La frase de un libro donde apareció una palabra.
+
+    `term` es la forma que se consultó en esta frase, tal como la guardó la
+    fuente. En una entrada con varias formas cada contexto conserva la suya:
+    `Entry.term` es solo la de la consulta más antigua, y buscarla en los demás
+    contextos falla (`crave` no está en «…his sequestered spirit craved.»).
+    Es lo que hay que localizar en la frase para taparla (D-020).
+    """
 
     external_id: str
+    term: str
     raw_sentence: str
     clean_sentence: str
     is_truncated: bool

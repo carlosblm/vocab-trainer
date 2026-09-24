@@ -101,6 +101,31 @@ def test_two_forms_sharing_lemma_produce_one_entry_with_two_contexts():
     assert {c.external_id for c in entry.contexts} == {"l1", "l2"}
 
 
+def test_each_context_keeps_its_own_looked_up_form():
+    """El término de la entrada es el de la consulta más antigua; cada contexto
+    conserva el suyo (D-020). Sin eso, `rely` no se localiza en «She relied on
+    luck.»."""
+    lookups = [
+        _lookup(
+            "relied", "l1", "She relied on luck.", datetime(2026, 1, 1, tzinfo=UTC)
+        ),
+        _lookup("rely", "l2", "I rely on you.", datetime(2026, 1, 2, tzinfo=UTC)),
+    ]
+    normalizer = _fake_normalizer(
+        {"relied": ("rely", "VERB"), "rely": ("rely", "VERB")}
+    )
+    repository = FakeRepository()
+
+    import_vocabulary(FakeImporter(lookups), repository, normalizer, "fake.db")
+
+    entry = repository.entries[0]
+    assert entry.term == "relied"
+    assert {c.external_id: c.term for c in entry.contexts} == {
+        "l1": "relied",
+        "l2": "rely",
+    }
+
+
 def test_looked_up_word_reaches_the_domain_rule():
     """No prueba la regla —eso es `test_entry.py`— sino que el caso de uso le
     entrega la palabra consultada y su idioma."""

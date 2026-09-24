@@ -76,7 +76,11 @@ class EntryRow(Base):
 
 
 class ContextRow(Base):
-    """La frase del libro. `raw_sentence` nunca se modifica."""
+    """La frase del libro. `raw_sentence` nunca se modifica.
+
+    `term` es la forma consultada en esta frase; `entries.term` es solo la de
+    la consulta más antigua de la entrada.
+    """
 
     __tablename__ = "contexts"
     __table_args__ = (UniqueConstraint("entry_id", "external_id"),)
@@ -86,6 +90,7 @@ class ContextRow(Base):
         BigInteger, ForeignKey("entries.id", ondelete="CASCADE"), index=True
     )
     external_id: Mapped[str | None] = mapped_column(String(255))
+    term: Mapped[str] = mapped_column(String(120))
     raw_sentence: Mapped[str] = mapped_column(Text)
     clean_sentence: Mapped[str | None] = mapped_column(Text)
     is_truncated: Mapped[bool] = mapped_column(Boolean, default=False)
