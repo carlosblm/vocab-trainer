@@ -35,6 +35,7 @@ Este archivo es el material de entrevista del proyecto. Cuando pregunten "¿por 
 | D-019 | 2026-09-24 | F0.5 | `cloze_original`: palabra completa, todas las apariciones, hueco fijo |
 | D-020 | 2026-09-24 | F0.5 | Cada contexto guarda la forma consultada en él |
 | D-021 | 2026-09-24 | F0.5 | El modelo de spaCy es una dependencia del lock |
+| D-023 | 2026-09-25 | F0.5 | Un contrato de repositorio por caso de uso |
 
 ---
 
@@ -473,6 +474,10 @@ solo módulo de spaCy.
 **Amplía la arquitectura descrita**: §3.3.2 de la propuesta solo contempla
 `VocabularyImporter` como puerto. Con este son tres.
 
+**Actualización (2026-09-25)**: el repositorio se separó en dos contratos, uno
+por caso de uso, así que ahora son cuatro puertos: importador, normalizador,
+`ImportRepository` y `StudyRepository` (D-023).
+
 **Revisión**: el contrato tiene una sola implementación, así que su capacidad
 real de abstraer está sin verificar. El primer examen llega con un segundo
 normalizador: el español en F7, o cualquier sustituto de spaCy.
@@ -729,6 +734,53 @@ que no importa en una aplicación que no se publica ahí.
 
 **Revisión**: al subir a spaCy 3.9, cambiar a la vez la URL del modelo y el
 rango, y comprobarlo con `spacy validate`.
+
+---
+
+## D-023 · Un contrato de repositorio por caso de uso
+
+**Fecha**: 2026-09-25 · **Fase**: F0.5
+
+**Decisión**: el puerto de persistencia se separa en dos `Protocol`, cada uno
+con lo que necesita su caso de uso: `ImportRepository` (`ensure_user`,
+`register_source`, `upsert_entries`) para `import_vocabulary`, y
+`StudyRepository` (`ensure_user` y las lecturas de estudio) para
+`next_exercise`. `ensure_user` se repite en los dos. La lectura de candidatos
+de la variante de elección irá a `StudyRepository`.
+
+**Descartado**: completar los dobles de prueba con los métodos que les
+faltaban, como stubs que lanzan `NotImplementedError`. Arreglaba el síntoma y
+había que repetirlo con cada método nuevo del puerto.
+
+**Por qué**: al añadir la lectura de `study` al único `VocabularyRepository`,
+tres dobles dejaron de cumplir el `Protocol`, cada uno por el lado contrario:
+
+| Doble | Caso de uso | Le faltaba |
+|---|---|---|
+| `FakeRepository` de `test_import_vocabulary.py` | `import_vocabulary` | la lectura de `study` |
+| `FakeRepository` de `test_next_exercise.py` | `next_exercise` | `register_source` y `upsert_entries` |
+| `CapturingRepository` de `scripts/profile_normalization.py` | `import_vocabulary` | la lectura de `study` |
+
+Cada uno tenía que implementar métodos que su caso de uso nunca llama, y el
+problema crecía con cada método nuevo: la lectura de candidatos habría sido el
+siguiente.
+
+**La separación es gratuita para el adaptador.** Un `Protocol` se cumple por
+forma, no por herencia: `PostgresVocabularyRepository` satisface los dos
+contratos sin declararlo y sin cambiar una línea. Lo comprueba mypy en la raíz
+de composición, al pasarlo a cada caso de uso. Verificado quitándole a
+propósito la lectura de `study`: el error aparece en `cli/main.py`.
+
+**El fallo lo vio el editor, no la verificación.** Los tests pasaban —Python no
+comprueba un `Protocol` en tiempo de ejecución— y mypy solo revisaba el paquete
+`vocab`, no `tests/` ni `scripts/`. Lo marcó Pylance al abrir un test. Ahora
+mypy revisa también esos dos directorios con una configuración más laxa: no
+exige anotar, pero revisa el cuerpo de las funciones sin anotar y obliga a
+completar las que se anotan a medias. Destapó además 9 errores de anotación en
+5 funciones auxiliares de los tests, ya corregidos. Es la lección de D-017 otra
+vez: una regla que solo se comprueba si alguien se acuerda no está comprobada.
+
+**Coste**: dos contratos en vez de uno y `ensure_user` declarado dos veces.
 
 ---
 
