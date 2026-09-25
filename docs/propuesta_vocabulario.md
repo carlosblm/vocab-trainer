@@ -230,6 +230,8 @@ Rango temporal: julio 2024 → septiembre 2026.
 
 **Dato crítico para el diseño**: la palabra consultada aparece **literalmente** dentro de su frase de contexto en el 100 % de los casos, comprobado en las dos exportaciones. Esto hace que el ejercicio de hueco (`cloze_original`) sea una sustitución de cadena trivial y perfectamente fiable, sin ninguna necesidad de modelo de lenguaje.
 
+La fiabilidad es con la palabra consultada **en cada contexto**, no con la de la entrada. Una entrada agrupa varias formas por lema, y su término es solo el de la consulta más antigua: sobre los 999 contextos utilizables que usa `study` en la exportación de septiembre, el término de la entrada no aparece como palabra completa en 49 (`crave` en «…spirit craved.»), y la palabra de cada contexto aparece en los 999 (D-020). La sustitución es por palabra completa y en todas las apariciones, no la primera subcadena (D-019).
+
 **Volumen**: 1.505 palabras son suficientes de sobra para la aplicación y del todo insuficientes para entrenar nada. Queda confirmado que este es un proyecto de **inferencia, orquestación y evaluación**, no de entrenamiento.
 
 **Capitalización.** `WORDS.id` incluye la capitalización original, así que
@@ -263,7 +265,7 @@ sources   (id, user_id, kind, filename, checksum, imported_at)
 entries   (id, user_id, source_id, external_id, term, lemma, lang, status,
            first_seen_at)
           UNIQUE (user_id, lemma, lang)
-contexts  (id, entry_id, external_id, raw_sentence, clean_sentence,
+contexts  (id, entry_id, external_id, term, raw_sentence, clean_sentence,
            is_truncated, pos, book_title, book_lang, captured_at)
           UNIQUE (entry_id, external_id)
 exercises        (id, entry_id, context_id, kind, lang, payload,
@@ -279,6 +281,7 @@ Notas de diseño:
 - `exercises` guarda `model` y `prompt_version` junto al ejercicio. Sin eso es imposible saber después qué configuración produjo qué resultado, y la evaluación pierde sentido.
 - `contexts` conserva la frase original **y** la limpia. Nunca se destruye el dato de partida.
 - `pos` vive en `contexts`, no en `entries`: la categoría gramatical depende de la frase donde aparece la palabra, no de la palabra en sí — la misma palabra puede ser verbo en un libro y sustantivo en otro. `entries.status` (`learning`/`known`/`noise`) sí es propiedad de la entrada, porque es el estado de estudio del usuario sobre esa palabra, no de una consulta concreta.
+- `contexts.term` guarda la forma consultada en esa frase; `entries.term` es solo la de la consulta más antigua de la entrada. En una entrada con varias formas (`relied`, `rely`), cada contexto necesita la suya para localizar la palabra en su frase (D-020).
 - `external_id` guarda el identificador de la fuente (`en:resilient`, `LOOKUPS.id`). Es lo que hace idempotente la reimportación (D-012).
 - La ingesta no escribe nunca en `reviews` ni en `scheduling_state`. El progreso del usuario vive en tablas que la importación no toca, y esa separación es lo que hace segura la reimportación.
 

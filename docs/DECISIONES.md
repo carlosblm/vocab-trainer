@@ -32,6 +32,9 @@ Este archivo es el material de entrevista del proyecto. Cuando pregunten "¿por 
 | D-016 | 2026-09-23 | F0.4 | La normalización entra por un puerto, no por tipos del adaptador |
 | D-017 | 2026-09-23 | F0.4 | La dirección de las dependencias la verifica import-linter |
 | D-018 | 2026-09-23 | F0.4 | El estado inicial lo decide la palabra consultada, no el conjunto de sus formas |
+| D-019 | 2026-09-24 | F0.5 | `cloze_original`: palabra completa, todas las apariciones, hueco fijo |
+| D-020 | 2026-09-24 | F0.5 | Cada contexto guarda la forma consultada en él |
+| D-021 | 2026-09-24 | F0.5 | El modelo de spaCy es una dependencia del lock |
 
 ---
 
@@ -186,6 +189,12 @@ El riesgo no viene de frases truncadas —solo el 0,7 % lo están— sino de la 
 
 **Métrica asociada**: D8.
 
+**Orden de implementación (2026-09-24)**: la guarda se implementa en F0.6.
+`cloze_original` llega antes, en F0.5, como excepción explícita a «antes de
+construir un ejercicio». Se acepta porque no muestra ningún significado y la
+partícula queda visible en la frase («Electronics _____ out hydraulics»): no
+puede enseñar un significado falso, que es el daño que esta guarda previene.
+
 ---
 
 ## D-009 · `preposition_cloze` entra en la v1 y no usa IA
@@ -247,6 +256,16 @@ el siguiente push, no dos semanas después.
 **Riesgo asumido**: si la CI no está operativa, la divergencia pasa
 desapercibida. Por eso la ejecución de tests en contenedor entra en la CI
 en F6 como muy tarde.
+
+**Verificado (2026-09-25)**: el riesgo se materializó. La imagen no tenía el
+modelo de spaCy: el `Dockerfile` lo descargaba con `spacy download` y el
+`uv sync --frozen` de la capa de código lo borraba a continuación (D-021).
+Construida la imagen del commit `cc75041`, `spacy.load("en_core_web_sm")`
+falla con `E050`. Se detectó a mano, no por CI, que todavía no existe: un
+`uv sync` borró el modelo del `.venv`, y al revisar el `Dockerfile` se vio que
+la imagen caía en lo mismo. Tras la corrección, importar el `vocab.db` de
+septiembre de 2026 sobre una base vacía da 860 entradas y 1.024 contextos
+tanto en la imagen como en el `.venv`.
 
 
 ---
@@ -528,6 +547,9 @@ que comparten lema.
   sobrescribir. El estado se calcula **al nacer** y nunca más. El constructor
   normal sigue aceptando cualquier valor, que es como el repositorio reconstruye
   una entrada guardada con el `known` que puso el usuario.
+- **Guardar la forma consultada en cada contexto.** Con la regla a nivel de
+  palabra no hacía falta, y se aplazó hasta tener consumidor. Lo tuvo en F0.5:
+  ver D-020.
 
 **Por qué a nivel de palabra**: dentro de un grupo el idioma es constante —la
 identidad de una entrada es `(lemma, lang)`— y la lista de D-013 se consulta
@@ -571,6 +593,142 @@ importarlo para recibirlo.
 **Revisión**: cuando la interfaz de F3 permita cambiar el estado a mano. Si
 rescatar entradas resulta frecuente, el rescate automático vuelve a la mesa con
 datos de uso en lugar de con un caso construido.
+
+---
+
+## D-019 · `cloze_original`: palabra completa, todas las apariciones, hueco fijo
+
+**Fecha**: 2026-09-24 · **Fase**: F0.5
+
+**Decisión**: el ejercicio es un objeto del dominio, `ClozeOriginal`, definido
+por dos campos: la frase limpia del contexto y la forma consultada en él
+(D-020). La palabra se localiza sin distinguir mayúsculas y como palabra
+completa; se tapan **todas** sus apariciones con un hueco de longitud fija; la
+respuesta esperada es la forma flexionada que aparece en la frase, no el lema;
+la corrección compara con `lower()` y `strip()`, nada más. Tras un fallo se
+muestran la palabra y la frase limpia.
+
+**Descartado**:
+
+- **Una función que devuelva el texto tapado.** La tabla `exercises` de §4.3
+  persistirá los ejercicios en F1, y lo que se persiste es un objeto.
+- **Buscar por subcadena.** La subcadena puede caer antes dentro de otra
+  palabra: `straw` en «…clutch at straws, and the anchor is a plausible straw.»
+  taparía `_____s` y dejaría la respuesta a la vista.
+- **Tapar solo una aparición.** En una frase que repite la palabra, las demás
+  apariciones dan la respuesta.
+- **Un hueco del tamaño de la palabra.** Revela cuántas letras tiene.
+
+**Medido** sobre los 999 contextos utilizables de las entradas `learning` de la
+exportación de septiembre de 2026, que son los que usa `study`:
+
+| Caso | Contextos |
+|---|---|
+| Repiten la palabra | 27 |
+| … con mayúsculas distintas (`Biases … biases`) | 2 |
+| La subcadena cae antes dentro de otra palabra | 1 |
+| La palabra va pegada a un guion (`tech-savvy`) | 9 |
+
+Sobre las 1.024 consultas en inglés, ruido incluido, son 36 repeticiones y 4
+subcadenas: las otras 3 subcadenas están en entradas `noise`.
+
+**Derivadas**:
+
+- **Determinista.** Tapar todas las apariciones elimina la posición como dato:
+  el ejercicio queda definido por la frase y la palabra, sin azar que guardar.
+  El texto tapado y la respuesta son propiedades derivadas, así que no se puede
+  construir un ejercicio cuyo hueco no corresponda a su frase.
+- **Invariante, no decisión al nacer.** Que la palabra aparezca como palabra
+  completa se comprueba en `__post_init__` y lanza `ValueError`, porque tiene
+  que cumplirse también al reconstruir el ejercicio en F1. Es lo contrario de
+  `Entry.new` (D-018), que decide el estado una sola vez. Una palabra vacía
+  también se rechaza: el patrón vacío encaja al final de la frase y aceptaría
+  `""` como respuesta correcta.
+- **El caso de uso no se cae por un contexto roto.** Si `ClozeOriginal` lanza,
+  avisa, prueba otro contexto y luego otra entrada, recorriendo permutaciones
+  aleatorias para no perder la uniformidad. Con la palabra de cada contexto
+  ocurre en 0 de los 999: es una red de seguridad.
+- **El guion cuenta como borde.** `savvy` en `tech-savvy` queda
+  `tech-_____`: el Kindle guardó `savvy`, no el compuesto. Entre esos 9 casos
+  están `gone belly-up` y `roll-up`, que son terreno de D-008.
+
+---
+
+## D-020 · Cada contexto guarda la forma consultada en él
+
+**Fecha**: 2026-09-24 · **Fase**: F0.5
+
+**Decisión**: `Context.term` y la columna `contexts.term` (`NOT NULL`) guardan
+la palabra que se consultó en esa frase, tal como la guardó la fuente.
+`Entry.term` sigue siendo la de la consulta más antigua. El nombre es el mismo
+porque el dato es el mismo: `entries.term` es el `term` de su primer contexto.
+
+**Descartado**: buscar `Entry.term` en todos los contextos de la entrada y
+descartar aquellos donde no aparece. No cambiaba el esquema, pero perdía
+contextos en silencio y hacía que «utilizable» significara dos cosas distintas.
+
+**Historia**: la opción se consideró en F0.4, al decidir D-018, y se aplazó por
+tres motivos: con la regla de ruido a nivel de palabra no hacía falta; la forma
+del campo no se sabría hasta tener su consumidor, `cloze_original`; y añadirla
+después costaba una columna. Ahora hay consumidor y forma conocida.
+
+**Por qué ahora**, medido sobre los 999 contextos utilizables de las entradas
+`learning` de la exportación de septiembre de 2026 (los que usa `study`):
+
+| Palabra que se busca en la frase | No aparece como palabra completa |
+|---|---|
+| `Entry.term` | 49 contextos |
+| `Context.term` | 0 contextos |
+
+Los 49 son contextos de entradas con varias formas: `crave` no está en «…his
+sequestered spirit craved.». En este corpus ninguna entrada se quedaba sin
+ejercicio (medido: 0), pero se perdían esos 49 contextos sin aviso.
+
+**La migración se niega a ejecutarse sobre una tabla con filas.** La forma
+consultada no se puede reconstruir desde la base: solo está en la fuente.
+Rellenarla con `entries.term` habría puesto una forma falsa en 58 de los 1.024
+contextos de septiembre (7 de ellos solo por mayúsculas), sin aviso, en una
+columna que promete «tal como la guardó la fuente». La migración `fee3d3fffef4`
+aborta si `contexts` tiene filas y explica qué hacer: `alembic downgrade base`,
+`upgrade head` y reimportar. Hasta F3 no hay progreso que perder. Verificado en
+un Postgres desechable: con una fila aborta y la base queda en la revisión
+anterior, porque el DDL es transaccional; sin filas, añade la columna.
+
+**Consecuencia sobre §4.2 de la propuesta**: «si tras el recorte la palabra
+objetivo no sobrevive en un contexto utilizable» solo se puede evaluar si el
+contexto conoce su palabra. Ahora la conoce.
+
+---
+
+## D-021 · El modelo de spaCy es una dependencia del lock
+
+**Fecha**: 2026-09-24 · **Fase**: F0.5
+
+**Decisión**: `en_core_web_sm` 3.8.0 se declara en `pyproject.toml` con URL
+directa a su release de GitHub (`explosion/spacy-models`) y queda en `uv.lock`
+con su hash. spaCy se acota a `>=3.8,<3.9`.
+
+**Descartado**: descargarlo a mano con `spacy download`, que era lo que había,
+en local y en el `Dockerfile`.
+
+**Por qué**: `uv sync` deja el entorno exactamente como el lock, y el modelo no
+estaba en él, así que cada sincronización lo borraba. Por la misma razón la
+imagen no lo tenía: el `Dockerfile` lo descargaba y el `uv sync --frozen` de la
+capa de código lo eliminaba a continuación (D-011, «Verificado»). Ahora `uv
+sync` lo conserva y, si falta, lo reinstala.
+
+**El rango existe porque el wheel del modelo no declara su dependencia de
+spaCy.** `spacy validate` exige `>=3.8.0,<3.9.0` para el modelo 3.8.0, pero el
+wheel no tiene `Requires-Dist` y el lock no le registra ninguna dependencia.
+Sin el rango, un `uv lock --upgrade` podría subir spaCy a 3.9 y dejar el modelo
+incompatible sin avisar. Modelo y spaCy se actualizan juntos.
+
+**Coste**: `allow-direct-references` en la configuración de hatchling, que por
+defecto rechaza URLs directas en las dependencias. PyPI tampoco las admite, lo
+que no importa en una aplicación que no se publica ahí.
+
+**Revisión**: al subir a spaCy 3.9, cambiar a la vez la URL del modelo y el
+rango, y comprobarlo con `spacy validate`.
 
 ---
 
