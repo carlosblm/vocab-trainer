@@ -26,7 +26,24 @@ def choose_options(
     candidates: Iterable[Entry],
     rng: random.Random,
 ) -> tuple[str, ...] | None:
-    """Las opciones del ejercicio sobre `context`, en su orden, o `None`.
+    """Las opciones del ejercicio sobre `context`, en su orden, o `None` si
+    no hay distractores suficientes (ver `eligible_forms`)."""
+    forms = eligible_forms(entry, context, candidates)
+    if len(forms) < OPTION_COUNT - 1:
+        return None
+
+    answer = context.term
+    options = [answer, *rng.sample(forms, OPTION_COUNT - 1)]
+    rng.shuffle(options)
+    return tuple(_written_like(option, answer) for option in options)
+
+
+def eligible_forms(
+    entry: Entry, context: Context, candidates: Iterable[Entry]
+) -> list[str]:
+    """Las formas que pueden ser distractores de `context`, sin repetir y en el
+    orden de los candidatos. Cuántas hay explica por qué un contexto se queda
+    sin opciones.
 
     Un candidato vale si:
 
@@ -39,13 +56,12 @@ def choose_options(
       candidato.
 
     Una respuesta sin analizar (`pos = None`) no tiene forma que igualar, así
-    que no admite opciones.
+    que no admite ninguno.
     """
     if context.pos is None or context.morph is None:
-        return None
+        return []
 
-    answer = context.term
-    taken = {answer.lower()}
+    taken = {context.term.lower()}
     forms: list[str] = []
     for candidate in candidates:
         if (
@@ -61,13 +77,7 @@ def choose_options(
                 continue
             taken.add(other.term.lower())
             forms.append(other.term)
-
-    if len(forms) < OPTION_COUNT - 1:
-        return None
-
-    options = [answer, *rng.sample(forms, OPTION_COUNT - 1)]
-    rng.shuffle(options)
-    return tuple(_written_like(option, answer) for option in options)
+    return forms
 
 
 def _written_like(form: str, model: str) -> str:

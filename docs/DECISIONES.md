@@ -35,6 +35,7 @@ Este archivo es el material de entrevista del proyecto. Cuando pregunten "¿por 
 | D-019 | 2026-09-24 | F0.5 | `cloze_original`: palabra completa, todas las apariciones, hueco fijo |
 | D-020 | 2026-09-24 | F0.5 | Cada contexto guarda la forma consultada en él |
 | D-021 | 2026-09-24 | F0.5 | El modelo de spaCy es una dependencia del lock |
+| D-022 | 2026-09-25 | F0.5 | Variante de elección: distractores con la misma forma gramatical |
 | D-023 | 2026-09-25 | F0.5 | Un contrato de repositorio por caso de uso |
 
 ---
@@ -657,6 +658,10 @@ subcadenas: las otras 3 subcadenas están en entradas `noise`.
   `tech-_____`: el Kindle guardó `savvy`, no el compuesto. Entre esos 9 casos
   están `gone belly-up` y `roll-up`, que son terreno de D-008.
 
+**Variante de elección (2026-09-25)**: `ClozeOriginal` sigue siendo la variante
+de escritura, determinista y de dos campos. La de elección es un tipo nuevo que
+lo contiene y fija sus opciones al crearse (D-022).
+
 ---
 
 ## D-020 · Cada contexto guarda la forma consultada en él
@@ -734,6 +739,109 @@ que no importa en una aplicación que no se publica ahí.
 
 **Revisión**: al subir a spaCy 3.9, cambiar a la vez la URL del modelo y el
 rango, y comprobarlo con `spacy validate`.
+
+---
+
+## D-022 · Variante de elección: distractores con la misma forma gramatical
+
+**Fecha**: 2026-09-25 · **Fase**: F0.5
+
+**Decisión**: `cloze_original` tiene las dos variantes que prevé §2.3 («la
+escribe o la elige»). La de elección es la predeterminada en la CLI y `--write`
+activa la de escritura; cuándo pasar de una a otra es F3. Cuatro opciones: la
+respuesta y tres distractores tomados de las palabras que el propio lector
+consultó, con la misma categoría y los mismos rasgos morfológicos
+(`Context.pos` y `Context.morph`), de otro lema, del mismo idioma, nunca
+`noise` y sin formas repetidas. Las opciones y su orden se fijan al crear el
+ejercicio, con el azar por parámetro.
+
+Es un tipo nuevo, `ClozeOriginalChoice`, que contiene un `ClozeOriginal`: la
+variante de escritura no cambia y D-019 sigue siendo cierta. La regla es una
+función pura del dominio, `choose_options`: candidatos y azar de entrada,
+opciones o `None` de salida.
+
+**Por qué la misma forma gramatical**: sin ella, el ejercicio se resuelve por
+gramática. En «She _____ on the maps» solo encaja un verbo en pasado: un
+sustantivo o un gerundio se descartan sin conocer la palabra.
+
+**Por qué otro lema**: dos formas del mismo lema serían dos respuestas
+correctas. `learned` y `learnt` comparten lema y rasgos (`VERB`,
+`Tense=Past|VerbForm=Fin`): sin el filtro, las dos aparecerían entre las
+opciones. Por lo mismo, una forma idéntica a la respuesta que venga de otro
+lema tampoco vale.
+
+**Medido** sobre los 999 contextos de `study` de la exportación de septiembre
+de 2026, con los 1.000 contextos de las entradas no `noise` como candidatos:
+
+| | Contextos |
+|---|---|
+| Con al menos tres distractores | 986 |
+| Sin ellos | 13 |
+
+Los 13 son clases cerradas o raras: conjunciones subordinantes (`although`
+dos veces, `after`, `whence`), superlativos (`best`, `widest`), modales
+(`shall`, `ought`, `might`), `neither`, `three`, `thy` y `Woes`, que es un
+error del etiquetador (`NNS` con categoría AUX).
+
+**Repliegue**: un contexto sin tres distractores se presenta en la variante de
+escritura, con un aviso que dice por qué: cuántas palabras consultadas comparten
+su forma gramatical, cuál es esa forma y que hacen falta tres para que la
+gramática no delate la respuesta. No se busca otro contexto que sí los tenga:
+sesgaría la selección hacia las palabras con muchas formas parecidas.
+
+**Descartado**, medido sobre los 13:
+
+| Alternativa | Siguen sin 3 | Por qué no |
+|---|---|---|
+| Misma categoría, sin rasgos | 7 | Vuelve la pista gramatical |
+| Completar con cualquier palabra de las frases | 4 | Exige guardar el análisis de cada token, y mete fragmentos de contracción (`ca`, `wo` de `can't`, `won't`) |
+| Menos de cuatro opciones | 0 | Acertar al azar deja de ser un 25 % y los resultados dejan de ser comparables |
+
+**`token.morph` y no `tag_`**: FEATS de Universal Dependencies es el mismo
+formato en inglés y en español (§3.3.1); las etiquetas Penn Treebank de `tag_`
+son propias del inglés.
+El matiz medido: `en_core_web_sm` no tiene morfologizador, y los rasgos los pone
+`attribute_ruler` a partir de la etiqueta Penn y de reglas por palabra. En
+inglés, por tanto, `morph` no aporta nada que `tag_` no tenga —ninguna
+combinación de categoría y rasgos corresponde a dos etiquetas— y a veces es más
+fino de lo que pide la gramática: la etiqueta `MD` se parte en `VerbType=Mod`
+(`shall`, `ought`) y `VerbForm=Fin` (`might`, `would`, `could`), y `thy` no
+comparte rasgos con `my`. Se acepta por la coherencia entre idiomas.
+
+Se guarda en `contexts.morph`, con los rasgos en orden alfabético. De las 1.024
+consultas inglesas, 966 tienen rasgos; 56 son tokens localizados sin rasgos
+(`""`, sobre todo adverbios) y 2 no se localizaron (`None`). Confundir esos dos
+casos es el error que D-016 evitó con `pos`. La migración `7a2292119592` se
+niega a ejecutarse con filas, con el mismo criterio que D-020.
+
+**Mayúsculas: las opciones adoptan el patrón de la respuesta.** Si la respuesta
+va capitalizada, se capitalizan las cuatro; si va en mayúsculas, las cuatro en
+mayúsculas; si no, las cuatro en minúscula, también la escritura mixta (`PhD`).
+En los 999 contextos hay 973 respuestas en minúscula, 22 capitalizadas, 3 en
+mayúsculas y 1 mixta. La corrección sigue comparando en minúscula.
+
+Esto hace innecesario cruzar PROPN con mayúsculas: la regla no mira la
+categoría, así que no depende de que spaCy acierte con los nombres propios, y
+no acierta en ninguna de las dos direcciones. De las 26 respuestas con
+mayúscula solo 12 son PROPN; las otras 14 no lo son para spaCy, y casi todas
+abren frase o titular (`Biases`, `Hence`, `VACUUM`). Y otras 12 PROPN son
+palabras comunes en minúscula (`geese`, `inn`, `kin`). La alternativa
+considerada, «minúscula salvo PROPN», dejaba expuestos los 24 ejercicios con
+respuesta PROPN: en los 24 hay distractores posibles escritos de otra forma que
+la respuesta, porque salen de un grupo PROPN mitad en minúscula, y que se
+notara dependía del sorteo. Con el patrón de la respuesta, las cuatro opciones
+se escriben igual por construcción: 0 de los 986 ejercicios mezclan
+escrituras.
+
+**El corpus se lee en cada llamada**, no una vez por sesión. El caso de uso no
+guarda estado, como exigirá la API sin estado de F3 (§3.3.3), y lo que lee está
+siempre al día cuando responder cambie el estado de repaso. Medido sobre
+Postgres local con el corpus de septiembre: unos 50 ms de mediana por ejercicio
+de elección y 23 ms por uno de escritura. No hay nada que optimizar.
+
+**Revisión**: en F3, cuándo pasar de elección a escritura según el progreso de
+cada palabra. Si los 13 contextos sin opciones molestan en el uso diario, el
+repliegue con palabras de las frases está medido: rescata 9.
 
 ---
 

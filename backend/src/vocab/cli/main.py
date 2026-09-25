@@ -24,8 +24,9 @@ from vocab.adapters.kindle import KindleVocabImporter
 from vocab.adapters.nlp.normalizer import normalize
 from vocab.adapters.postgres.repository import PostgresVocabularyRepository
 from vocab.application.import_vocabulary import import_vocabulary
-from vocab.application.next_exercise import next_exercise
+from vocab.application.next_exercise import ChoiceFallback, next_exercise
 from vocab.config import get_settings
+from vocab.domain.exercises.cloze_original_choice import ClozeOriginalChoice
 
 app = typer.Typer(
     help="Estudio de vocabulario a partir del vocab.db de Kindle.",
@@ -81,11 +82,20 @@ def import_command(
 
 
 @app.command()
-def study() -> None:
+def study(
+    write: Annotated[
+        bool,
+        typer.Option(
+            "--write",
+            help="Escribir la palabra en vez de elegirla entre cuatro opciones.",
+        ),
+    ] = False,
+) -> None:
     """Muestra ejercicios cloze_original.
 
-    Sigue hasta que cierres la entrada (Ctrl+D) o interrumpas (Ctrl+C). No
-    guarda las respuestas: eso llega en F3.
+    Por defecto hay que elegir la palabra entre cuatro opciones; con --write,
+    escribirla. Sigue hasta que cierres la entrada (Ctrl+D) o interrumpas
+    (Ctrl+C). No guarda las respuestas: eso llega en F3.
     """
     rng = random.Random()
     shown = correct = 0
@@ -98,30 +108,85 @@ def study() -> None:
             # usuario que `ensure_user` crea en una base vacía, y se descarta
             # al cerrar.
             with Session(engine) as session:
-                exercise = next_exercise(PostgresVocabularyRepository(session), rng)
+                item = next_exercise(
+                    PostgresVocabularyRepository(session), rng, choice=not write
+                )
 
-            if exercise is None:
+            if item is None:
                 typer.echo(
                     "No hay entradas en estudio con contexto utilizable. "
                     "Importa un vocab.db con `vocab import`."
                 )
                 return
 
-            typer.echo(f"\n{exercise.masked_sentence}")
+            exercise = item.exercise
+            cloze = (
+                exercise.cloze
+                if isinstance(exercise, ClozeOriginalChoice)
+                else exercise
+            )
+            typer.echo("")
+            if item.fallback is not None:
+                typer.echo(_fallback_notice(item.fallback))
+            typer.echo(cloze.masked_sentence)
+            if isinstance(exercise, ClozeOriginalChoice):
+                for number, option in enumerate(exercise.options, start=1):
+                    typer.echo(f"  {number}) {option}")
+
+            label = (
+                "Elige (1-4)"
+                if isinstance(exercise, ClozeOriginalChoice)
+                else "Respuesta"
+            )
             try:
-                response = typer.prompt("Respuesta", default="", show_default=False)
+                response = typer.prompt(label, default="", show_default=False)
             except typer.Abort:
                 break
+            if isinstance(exercise, ClozeOriginalChoice):
+                response = _chosen_option(exercise, response)
 
             shown += 1
             if exercise.is_correct(response):
                 correct += 1
                 typer.echo("Correcto.")
             else:
-                typer.echo(f"Incorrecto. La palabra era «{exercise.word}».")
-                typer.echo(f"Frase: {exercise.sentence}")
+                typer.echo(f"Incorrecto. La palabra era «{cloze.word}».")
+                typer.echo(f"Frase: {cloze.sentence}")
 
     typer.echo(f"\n{correct} de {shown} correctas.")
+
+
+def _chosen_option(exercise: ClozeOriginalChoice, response: str) -> str:
+    """El número de una opción la elige; cualquier otra cosa se corrige como
+    si se hubiera escrito."""
+    text = response.strip()
+    if text.isdigit() and 1 <= int(text) <= len(exercise.options):
+        return exercise.options[int(text) - 1]
+    return response
+
+
+def _fallback_notice(fallback: ChoiceFallback) -> str:
+    """El aviso del repliegue a escritura, con su motivo (D-022)."""
+    if fallback.pos is None:
+        reason = (
+            "spaCy no localizó la palabra en su frase, así que no se sabe qué "
+            "forma gramatical deberían tener las opciones"
+        )
+    else:
+        form = f"{fallback.pos} {fallback.morph or 'sin rasgos'}"
+        if fallback.available == 0:
+            others = "ninguna otra de tus palabras consultadas tiene"
+        elif fallback.available == 1:
+            others = "solo otra de tus palabras consultadas tiene"
+        else:
+            others = (
+                f"solo otras {fallback.available} de tus palabras consultadas tienen"
+            )
+        reason = (
+            f"{others} su misma forma gramatical ({form}), y hacen falta "
+            f"{fallback.needed} para que la gramática no delate la respuesta"
+        )
+    return f"Sin opciones: {reason}. Escríbela."
 
 
 if __name__ == "__main__":
