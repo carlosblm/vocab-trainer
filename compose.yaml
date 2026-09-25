@@ -25,6 +25,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./backend/src:/app/src
+      # Los vocab.db que lee `vocab import`, en /data y de solo lectura. La
+      # ruta sale de VOCAB_TEST_DATA en .env
+      - ${VOCAB_TEST_DATA:-./backend/tests/fixtures}:/data:ro
     depends_on:
       db:
         condition: service_healthy
