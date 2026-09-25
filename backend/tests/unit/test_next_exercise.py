@@ -13,10 +13,17 @@ from vocab.domain.models import Context, Entry
 
 
 class FakeRepository:
-    """Devuelve las entradas que recibe y anota para qué usuario se pidieron."""
+    """Devuelve las entradas que recibe y anota para qué usuario se pidieron.
 
-    def __init__(self, entries: list[Entry]) -> None:
+    `candidates` son las entradas de las que salen los distractores; por
+    defecto ninguna.
+    """
+
+    def __init__(
+        self, entries: list[Entry], candidates: list[Entry] | None = None
+    ) -> None:
         self._entries = entries
+        self._candidates = candidates or []
         self.requested_user_ids: list[int] = []
 
     def ensure_user(self) -> int:
@@ -25,6 +32,9 @@ class FakeRepository:
     def list_learning_entries_with_usable_context(self, user_id: int) -> list[Entry]:
         self.requested_user_ids.append(user_id)
         return self._entries
+
+    def list_non_noise_entries(self, user_id: int) -> list[Entry]:
+        return self._candidates
 
 
 class InOrder(random.Random):

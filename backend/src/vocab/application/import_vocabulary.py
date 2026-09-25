@@ -10,7 +10,7 @@ from vocab.domain.models import Context, Entry
 from vocab.domain.noise import LookedUpWord
 from vocab.ports.importer import RawLookup, VocabularyImporter
 from vocab.ports.normalizer import CleanedLookup, NormalizedWord, Normalizer
-from vocab.ports.repository import ImportStats, VocabularyRepository
+from vocab.ports.repository import ImportRepository, ImportStats
 
 
 @dataclass(frozen=True)
@@ -46,7 +46,7 @@ class _AnalyzedLookup:
 
 def import_vocabulary(
     importer: VocabularyImporter,
-    repository: VocabularyRepository,
+    repository: ImportRepository,
     normalizer: Normalizer,
     filename: str,
 ) -> ImportStats:
@@ -121,6 +121,7 @@ def _to_context(item: _AnalyzedLookup) -> Context:
         is_truncated=is_truncated(item.clean_sentence),
         captured_at=item.looked_up_at,
         pos=item.analysis.pos,
+        morph=item.analysis.morph,
         book_title=item.lookup.book_title,
         book_lang=item.lookup.book_lang,
     )

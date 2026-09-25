@@ -13,6 +13,10 @@ from vocab.ports.importer import RawLookup
 from vocab.ports.normalizer import CleanedLookup, NormalizedWord, Normalizer
 from vocab.ports.repository import ImportStats
 
+PAST = "Tense=Past|VerbForm=Fin"
+PRESENT = "Tense=Pres|VerbForm=Fin"
+SINGULAR = "Number=Sing"
+
 
 class FakeImporter:
     kind = "fake"
@@ -36,10 +40,14 @@ class FakeRepository:
     def ensure_user(self) -> int:
         return 1
 
-    def register_source(self, user_id, kind, filename, checksum) -> int:
+    def register_source(
+        self, user_id: int, kind: str, filename: str, checksum: str
+    ) -> int:
         return 1
 
-    def upsert_entries(self, user_id, source_id, entries: list[Entry]) -> ImportStats:
+    def upsert_entries(
+        self, user_id: int, source_id: int, entries: list[Entry]
+    ) -> ImportStats:
         self.entries = entries
         return ImportStats(
             entries_created=len(entries),
@@ -60,20 +68,23 @@ def _lookup(word: str, external_id: str, sentence: str, when: datetime) -> RawLo
 
 
 def _fake_normalizer(
-    analysis_by_word: dict[str, tuple[str, str | None]],
+    analysis_by_word: dict[str, tuple[str, str | None, str | None]],
     reverse: bool = False,
 ) -> Normalizer:
-    """Normalizador falso: (lema, categoría) fijos por palabra, sin spaCy.
+    """Normalizador falso: (lema, categoría, rasgos) fijos por palabra, sin
+    spaCy.
 
     `reverse` devuelve los resultados en orden inverso al de entrada. El
     puerto no promete orden, así que un doble que lo altera es legítimo.
     """
 
     def normalizer(cleaned_lookups: list[CleanedLookup]) -> list[NormalizedWord]:
-        lemma_and_pos = (analysis_by_word[item.word] for item in cleaned_lookups)
+        analyses = (analysis_by_word[item.word] for item in cleaned_lookups)
         result = [
-            NormalizedWord(external_id=item.external_id, lemma=lemma, pos=pos)
-            for item, (lemma, pos) in zip(cleaned_lookups, lemma_and_pos, strict=True)
+            NormalizedWord(
+                external_id=item.external_id, lemma=lemma, pos=pos, morph=morph
+            )
+            for item, (lemma, pos, morph) in zip(cleaned_lookups, analyses, strict=True)
         ]
         return result[::-1] if reverse else result
 
@@ -88,7 +99,7 @@ def test_two_forms_sharing_lemma_produce_one_entry_with_two_contexts():
         _lookup("rely", "l2", "I rely on you.", datetime(2026, 1, 1, tzinfo=UTC)),
     ]
     normalizer = _fake_normalizer(
-        {"relied": ("rely", "VERB"), "rely": ("rely", "VERB")}
+        {"relied": ("rely", "VERB", PAST), "rely": ("rely", "VERB", PRESENT)}
     )
     repository = FakeRepository()
 
@@ -112,7 +123,7 @@ def test_each_context_keeps_its_own_looked_up_form():
         _lookup("rely", "l2", "I rely on you.", datetime(2026, 1, 2, tzinfo=UTC)),
     ]
     normalizer = _fake_normalizer(
-        {"relied": ("rely", "VERB"), "rely": ("rely", "VERB")}
+        {"relied": ("rely", "VERB", PAST), "rely": ("rely", "VERB", PRESENT)}
     )
     repository = FakeRepository()
 
@@ -132,7 +143,7 @@ def test_looked_up_word_reaches_the_domain_rule():
     lookups = [
         _lookup("the", "l1", "The bridge held.", datetime(2026, 1, 1, tzinfo=UTC))
     ]
-    normalizer = _fake_normalizer({"the": ("the", "DET")})
+    normalizer = _fake_normalizer({"the": ("the", "DET", "Definite=Def|PronType=Art")})
     repository = FakeRepository()
 
     import_vocabulary(FakeImporter(lookups), repository, normalizer, "fake.db")
@@ -140,7 +151,7 @@ def test_looked_up_word_reaches_the_domain_rule():
     assert repository.entries[0].status is EntryStatus.NOISE
 
 
-def test_context_pos_belongs_to_its_own_lookup_not_the_first():
+def test_context_analysis_belongs_to_its_own_lookup_not_the_first():
     lookups = [
         _lookup(
             "relied", "l1", "She relied on luck.", datetime(2026, 1, 1, tzinfo=UTC)
@@ -148,19 +159,21 @@ def test_context_pos_belongs_to_its_own_lookup_not_the_first():
         _lookup("rely", "l2", "I rely on you.", datetime(2026, 1, 2, tzinfo=UTC)),
     ]
     normalizer = _fake_normalizer(
-        {"relied": ("rely", "VERB"), "rely": ("rely", "NOUN")}
+        {"relied": ("rely", "VERB", PAST), "rely": ("rely", "NOUN", SINGULAR)}
     )
     repository = FakeRepository()
 
     import_vocabulary(FakeImporter(lookups), repository, normalizer, "fake.db")
 
-    pos_by_context = {c.external_id: c.pos for c in repository.entries[0].contexts}
-    assert pos_by_context == {"l1": "VERB", "l2": "NOUN"}
+    analysis_by_context = {
+        c.external_id: (c.pos, c.morph) for c in repository.entries[0].contexts
+    }
+    assert analysis_by_context == {"l1": ("VERB", PAST), "l2": ("NOUN", SINGULAR)}
 
 
 def test_results_are_paired_by_key_not_by_position():
     """El puerto no garantiza orden: reemparejar por posición asignaría el
-    `pos` de una consulta a la otra."""
+    `pos` y los rasgos de una consulta a la otra."""
     lookups = [
         _lookup(
             "relied", "l1", "She relied on luck.", datetime(2026, 1, 1, tzinfo=UTC)
@@ -168,32 +181,37 @@ def test_results_are_paired_by_key_not_by_position():
         _lookup("rely", "l2", "I rely on you.", datetime(2026, 1, 2, tzinfo=UTC)),
     ]
     normalizer = _fake_normalizer(
-        {"relied": ("rely", "VERB"), "rely": ("rely", "NOUN")}, reverse=True
+        {"relied": ("rely", "VERB", PAST), "rely": ("rely", "NOUN", SINGULAR)},
+        reverse=True,
     )
     repository = FakeRepository()
 
     import_vocabulary(FakeImporter(lookups), repository, normalizer, "fake.db")
 
-    pos_by_context = {c.external_id: c.pos for c in repository.entries[0].contexts}
-    assert pos_by_context == {"l1": "VERB", "l2": "NOUN"}
+    analysis_by_context = {
+        c.external_id: (c.pos, c.morph) for c in repository.entries[0].contexts
+    }
+    assert analysis_by_context == {"l1": ("VERB", PAST), "l2": ("NOUN", SINGULAR)}
 
 
-def test_unresolved_word_keeps_its_context_with_no_pos():
+def test_unresolved_word_keeps_its_context_with_no_analysis():
     lookups = [
         _lookup("thole", "l1", "He held the thole.", datetime(2026, 1, 1, tzinfo=UTC))
     ]
-    normalizer = _fake_normalizer({"thole": ("thole", None)})
+    normalizer = _fake_normalizer({"thole": ("thole", None, None)})
     repository = FakeRepository()
 
     import_vocabulary(FakeImporter(lookups), repository, normalizer, "fake.db")
 
-    assert repository.entries[0].contexts[0].pos is None
+    context = repository.entries[0].contexts[0]
+    assert context.pos is None
+    assert context.morph is None
 
 
 def test_raw_and_clean_sentence_are_preserved():
     dirty = "It proved resilient.[59] "
     lookups = [_lookup("resilient", "l1", dirty, datetime(2026, 1, 1, tzinfo=UTC))]
-    normalizer = _fake_normalizer({"resilient": ("resilient", "ADJ")})
+    normalizer = _fake_normalizer({"resilient": ("resilient", "ADJ", "Degree=Pos")})
     repository = FakeRepository()
 
     import_vocabulary(FakeImporter(lookups), repository, normalizer, "fake.db")

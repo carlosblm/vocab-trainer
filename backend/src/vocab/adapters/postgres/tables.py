@@ -95,6 +95,7 @@ class ContextRow(Base):
     clean_sentence: Mapped[str | None] = mapped_column(Text)
     is_truncated: Mapped[bool] = mapped_column(Boolean, default=False)
     pos: Mapped[str | None] = mapped_column(String(16))
+    morph: Mapped[str | None] = mapped_column(String(255))
     book_title: Mapped[str | None] = mapped_column(String(500))
     book_lang: Mapped[str | None] = mapped_column(String(8))
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

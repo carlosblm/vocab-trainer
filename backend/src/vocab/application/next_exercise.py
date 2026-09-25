@@ -9,13 +9,13 @@ import logging
 import random
 
 from vocab.domain.exercises.cloze_original import ClozeOriginal
-from vocab.ports.repository import VocabularyRepository
+from vocab.ports.repository import StudyRepository
 
 logger = logging.getLogger(__name__)
 
 
 def next_exercise(
-    repository: VocabularyRepository, rng: random.Random
+    repository: StudyRepository, rng: random.Random
 ) -> ClozeOriginal | None:
     """Un ejercicio al azar, o `None` si no hay nada que estudiar.
 

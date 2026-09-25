@@ -55,9 +55,21 @@ pythonpath = ["src"]
 [tool.mypy]
 python_version = "3.12"
 mypy_path = "src"
-packages = ["vocab"]
+# `tests/` y `scripts/` no son paquetes: sus módulos se nombran por la ruta
+# desde aquí (`tests.unit.test_cli`) o desde `src` (`vocab.cli.main`).
+files = ["src", "tests", "scripts"]
+explicit_package_bases = true
 strict = true
 plugins = ["pydantic.mypy"]
+
+# En tests/ y scripts/ no se exige anotar, pero sí se revisa el cuerpo de las
+# funciones sin anotar. Sin esto, tres dobles de prueba que no cumplían su
+# Protocol pasaron la verificación y solo los vio el editor (D-023). Quien
+# empiece a anotar una función tiene que anotarla entera.
+[[tool.mypy.overrides]]
+module = ["tests.*", "scripts.*"]
+disallow_untyped_defs = false
+check_untyped_defs = true
 
 [tool.importlinter]
 root_package = "vocab"

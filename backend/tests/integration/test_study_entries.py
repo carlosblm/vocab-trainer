@@ -1,5 +1,6 @@
-"""La lectura para estudiar: solo entradas `learning` con algún contexto
-utilizable, reconstruidas completas desde Postgres.
+"""Las lecturas de `StudyRepository` sobre Postgres: las entradas `learning` con
+algún contexto utilizable, y las que aportan distractores (todo salvo `noise`),
+reconstruidas completas.
 
 Escribe entidades del dominio con `upsert_entries` y las vuelve a leer, así que
 también prueba que las funciones de traducción entre fila y entidad no pierden
@@ -14,7 +15,13 @@ from vocab.domain.models import Context, Entry, EntryStatus
 
 
 def _context(
-    external_id: str, term: str, sentence: str, *, truncated: bool = False
+    external_id: str,
+    term: str,
+    sentence: str,
+    *,
+    truncated: bool = False,
+    pos: str | None = "VERB",
+    morph: str | None = "Tense=Past|VerbForm=Fin",
 ) -> Context:
     return Context(
         external_id=external_id,
@@ -23,7 +30,8 @@ def _context(
         clean_sentence=sentence,
         is_truncated=truncated,
         captured_at=datetime(2026, 1, 1, tzinfo=UTC),
-        pos="VERB",
+        pos=pos,
+        morph=morph,
         book_title="A Test Book",
         book_lang="en",
     )
@@ -66,6 +74,26 @@ def test_learning_entry_comes_back_whole_with_every_context(session):
     _store(repository, user_id, [entry])
 
     assert repository.list_learning_entries_with_usable_context(user_id) == [entry]
+
+
+def test_empty_features_and_missing_analysis_survive_as_different_values(session):
+    """`""` es un token sin rasgos; `None`, uno no localizado (D-016). La base
+    no puede convertir uno en otro."""
+    repository = PostgresVocabularyRepository(session)
+    user_id = repository.ensure_user()
+    entry = _entry(
+        "thus",
+        EntryStatus.LEARNING,
+        [
+            _context("l1", "thus", "It was thus settled.", pos="ADV", morph=""),
+            _context("l2", "thus", "And thus it ended.", pos=None, morph=None),
+        ],
+    )
+    _store(repository, user_id, [entry])
+
+    [stored] = repository.list_learning_entries_with_usable_context(user_id)
+
+    assert [(c.pos, c.morph) for c in stored.contexts] == [("ADV", ""), (None, None)]
 
 
 def test_known_and_noise_entries_are_left_out(session):
@@ -117,3 +145,33 @@ def test_entries_of_another_user_are_left_out(session):
     )
 
     assert repository.list_learning_entries_with_usable_context(user_id) == []
+    assert repository.list_non_noise_entries(user_id) == []
+
+
+def test_candidate_entries_are_learning_and_known_but_never_noise(session):
+    repository = PostgresVocabularyRepository(session)
+    user_id = repository.ensure_user()
+    learning = _entry("rely", EntryStatus.LEARNING, [_context("l1", "rely", "I rely.")])
+    known = _entry("tide", EntryStatus.KNOWN, [_context("l2", "tide", "The tide.")])
+    noise = _entry("the", EntryStatus.NOISE, [_context("l3", "the", "The end.")])
+    _store(repository, user_id, [learning, known, noise])
+
+    assert repository.list_non_noise_entries(user_id) == [learning, known]
+
+
+def test_candidate_entries_keep_unusable_and_unanalyzed_contexts(session):
+    """A diferencia de la lectura de estudio, aquí no se descarta nada: qué
+    contexto sirve como distractor lo decide la regla del dominio."""
+    repository = PostgresVocabularyRepository(session)
+    user_id = repository.ensure_user()
+    entry = _entry(
+        "rely",
+        EntryStatus.LEARNING,
+        [
+            _context("l1", "relied", "They relied on the", truncated=True),
+            _context("l2", "rely", "I rely on you.", pos=None, morph=None),
+        ],
+    )
+    _store(repository, user_id, [entry])
+
+    assert repository.list_non_noise_entries(user_id) == [entry]

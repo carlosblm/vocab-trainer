@@ -26,6 +26,12 @@ class Context:
     `Entry.term` es solo la de la consulta más antigua, y buscarla en los demás
     contextos falla (`crave` no está en «…his sequestered spirit craved.»).
     Es lo que hay que localizar en la frase para taparla (D-020).
+
+    `pos` y `morph` son el análisis de esa forma en esta frase: categoría y
+    rasgos morfológicos en formato FEATS de Universal Dependencies. Los dos son
+    `None` si el normalizador no localizó el token; `morph = ""` es un token
+    localizado sin rasgos. Juntos dicen qué palabras pueden ocupar el hueco
+    sin que la gramática delate la respuesta (D-022).
     """
 
     external_id: str
@@ -35,6 +41,7 @@ class Context:
     is_truncated: bool
     captured_at: datetime
     pos: str | None = None
+    morph: str | None = None
     book_title: str | None = None
     book_lang: str | None = None
 

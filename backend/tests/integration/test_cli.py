@@ -9,7 +9,7 @@ sus propios tests unitarios.
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select, update
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.orm import Session
 from typer.testing import CliRunner
 
@@ -40,13 +40,13 @@ def database(engine, monkeypatch):
             connection.execute(table.delete())
 
 
-def _count(engine, table) -> int:
+def _count(engine: Engine, table: type[Base]) -> int:
     """Cuenta desde una sesión nueva: solo ve lo que alguien confirmó."""
     with Session(engine) as session:
-        return session.scalar(select(func.count()).select_from(table))
+        return session.execute(select(func.count()).select_from(table)).scalar_one()
 
 
-def _only_in_study(engine, lemma: str) -> None:
+def _only_in_study(engine: Engine, lemma: str) -> None:
     """Deja una sola entrada `learning`, para que el azar no tenga dónde
     elegir."""
     with engine.begin() as connection:

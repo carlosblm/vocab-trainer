@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -93,6 +93,7 @@ class PostgresVocabularyRepository:
                         clean_sentence=context.clean_sentence,
                         is_truncated=context.is_truncated,
                         pos=context.pos,
+                        morph=context.morph,
                         book_title=context.book_title,
                         book_lang=context.book_lang,
                         captured_at=context.captured_at,
@@ -115,16 +116,28 @@ class PostgresVocabularyRepository:
         # contexto es utilizable lo decide el dominio (`Context.is_usable`) y
         # no se repite aquí: dos copias de la regla acabarían divergiendo. El
         # coste es traer también los contextos truncados, que son pocos.
-        #
-        # Una sola consulta con join, no una por entrada. El `order_by` hace
-        # el orden estable que promete el puerto.
+        entries = self._load_entries(
+            user_id, EntryRow.status == EntryStatus.LEARNING.value
+        )
+        return [entry for entry in entries if entry.usable_contexts]
+
+    def list_non_noise_entries(self, user_id: int) -> list[Entry]:
+        # `!= noise` y no `IN (learning, known)`: un estado nuevo que se añada
+        # al CHECK aportará distractores salvo que alguien decida lo contrario.
+        return self._load_entries(user_id, EntryRow.status != EntryStatus.NOISE.value)
+
+    def _load_entries(
+        self, user_id: int, status_filter: ColumnElement[bool]
+    ) -> list[Entry]:
+        """Entradas del usuario que pasan el filtro, con todos sus contextos.
+
+        Una sola consulta con join, no una por entrada. El `order_by` hace el
+        orden estable que prometen las lecturas del puerto.
+        """
         rows = self._session.execute(
             select(EntryRow, ContextRow)
             .join(ContextRow, ContextRow.entry_id == EntryRow.id)
-            .where(
-                EntryRow.user_id == user_id,
-                EntryRow.status == EntryStatus.LEARNING.value,
-            )
+            .where(EntryRow.user_id == user_id, status_filter)
             .order_by(EntryRow.id, ContextRow.id)
         ).tuples()
 
@@ -134,11 +147,10 @@ class PostgresVocabularyRepository:
             entry_rows[entry_row.id] = entry_row
             contexts_by_entry[entry_row.id].append(_context_from_row(context_row))
 
-        entries = [
+        return [
             _entry_from_row(entry_row, contexts_by_entry[entry_id])
             for entry_id, entry_row in entry_rows.items()
         ]
-        return [entry for entry in entries if entry.usable_contexts]
 
 
 def _entry_from_row(row: EntryRow, contexts: list[Context]) -> Entry:
@@ -168,6 +180,7 @@ def _context_from_row(row: ContextRow) -> Context:
         is_truncated=row.is_truncated,
         captured_at=row.captured_at,
         pos=row.pos,
+        morph=row.morph,
         book_title=row.book_title,
         book_lang=row.book_lang,
     )

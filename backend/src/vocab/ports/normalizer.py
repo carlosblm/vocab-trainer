@@ -43,12 +43,13 @@ class NormalizedWord:
 
     `pos = None` significa que el token no se localizó en la frase. En ese
     caso `lemma` es la palabra consultada en minúsculas: se degrada, no se
-    pierde.
+    pierde, y `morph` también es `None`.
     """
 
     external_id: str
     lemma: str
     pos: str | None
+    morph: str | None
 
     @property
     def is_resolved(self) -> bool:
@@ -56,7 +57,7 @@ class NormalizedWord:
 
 
 # El contrato es un `Callable` y no un `Protocol`: a diferencia de
-# `VocabularyImporter` (ruta, idiomas) y `VocabularyRepository` (sesión), una
+# `VocabularyImporter` (ruta, idiomas) y los repositorios (sesión), una
 # normalización no tiene estado que inyectar. Exigir una clase obligaría al
 # adaptador a envolver una función en un objeto vacío, y a los tests a
 # fabricar una clase donde basta un cierre.

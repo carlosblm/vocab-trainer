@@ -67,18 +67,20 @@ def _normalize_group(group: list[CleanedLookup], lang: str) -> list[NormalizedWo
                         external_id=item.external_id,
                         lemma=token.lemma_.lower(),
                         pos=token.pos_,
+                        morph=str(token.morph),
                     )
                 )
                 break
         else:
             # Token no localizado: se degrada a la palabra en minúsculas y se
-            # marca con `pos = None`. Nunca se descarta — el puerto promete un
-            # resultado por entrada.
+            # marca con `pos = None` y `morph = None`. Nunca se descarta — el
+            # puerto promete un resultado por entrada.
             result.append(
                 NormalizedWord(
                     external_id=item.external_id,
                     lemma=item.word.lower(),
                     pos=None,
+                    morph=None,
                 )
             )
 

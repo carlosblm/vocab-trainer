@@ -6,9 +6,11 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from vocab.adapters.kindle import KindleVocabImporter
 from vocab.adapters.nlp.normalizer import normalize
+from vocab.adapters.postgres.base import Base
 from vocab.adapters.postgres.repository import PostgresVocabularyRepository
 from vocab.adapters.postgres.tables import ContextRow, EntryRow, SourceRow
 from vocab.application.import_vocabulary import import_vocabulary
@@ -25,16 +27,16 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _count(session, table) -> int:
-    return session.scalar(select(func.count()).select_from(table))
+def _count(session: Session, table: type[Base]) -> int:
+    return session.execute(select(func.count()).select_from(table)).scalar_one()
 
 
-def _count_truncated(session) -> int:
-    return session.scalar(
+def _count_truncated(session: Session) -> int:
+    return session.execute(
         select(func.count())
         .select_from(ContextRow)
         .where(ContextRow.is_truncated.is_(True))
-    )
+    ).scalar_one()
 
 
 def test_reimport_is_incremental(session):
