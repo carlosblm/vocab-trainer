@@ -12,21 +12,31 @@ dependencies = [
     "alembic",
     "psycopg[binary]",
     "pydantic-settings",
-    "spacy",
+    "spacy>=3.8,<3.9",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "typer",
 ]
+
+[project.scripts]
+vocab = "vocab.cli.main:app"
 
 [dependency-groups]
 dev = [
     "pytest",
     "ruff",
     "mypy",
-    "testcontainers[postgresql]>=4.15.0",
+    "testcontainers>=4.15.0",
     "import-linter>=2.15",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vocab"]
+
+# El modelo de spaCy no está en PyPI: se declara con URL directa a su release
+# para que viva en uv.lock. Descargado a mano con `spacy download`, `uv sync` lo
+# borraba por no figurar en el lock, y la imagen Docker se quedaba sin él.
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.ruff]
 target-version = "py312"

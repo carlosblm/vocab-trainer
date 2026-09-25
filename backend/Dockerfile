@@ -9,12 +9,9 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Capa de dependencias: se reconstruye solo si cambian pyproject.toml o uv.lock
+# Capa de dependencias: se reconstruye solo si cambian pyproject.toml o uv.lock.
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
-
-# Libreria de spacy para la normalización.
-RUN uv sync --frozen && uv run python -m spacy download en_core_web_sm
 
 # Capa de código: cambia en cada commit
 COPY src/ ./src/

@@ -1,11 +1,13 @@
 """Implementación del repositorio sobre PostgreSQL."""
 
+from collections import defaultdict
+
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from vocab.adapters.postgres.tables import ContextRow, EntryRow, SourceRow, UserRow
-from vocab.domain.models import Entry
+from vocab.domain.models import Context, Entry, EntryStatus
 from vocab.ports.repository import ImportStats
 
 
@@ -107,3 +109,65 @@ class PostgresVocabularyRepository:
             contexts_created=contexts_created,
             contexts_existing=total_contexts - contexts_created,
         )
+
+    def list_learning_entries_with_usable_context(self, user_id: int) -> list[Entry]:
+        # El estado se filtra en SQL: es un criterio de consulta. Si un
+        # contexto es utilizable lo decide el dominio (`Context.is_usable`) y
+        # no se repite aquí: dos copias de la regla acabarían divergiendo. El
+        # coste es traer también los contextos truncados, que son pocos.
+        #
+        # Una sola consulta con join, no una por entrada. El `order_by` hace
+        # el orden estable que promete el puerto.
+        rows = self._session.execute(
+            select(EntryRow, ContextRow)
+            .join(ContextRow, ContextRow.entry_id == EntryRow.id)
+            .where(
+                EntryRow.user_id == user_id,
+                EntryRow.status == EntryStatus.LEARNING.value,
+            )
+            .order_by(EntryRow.id, ContextRow.id)
+        ).tuples()
+
+        entry_rows: dict[int, EntryRow] = {}
+        contexts_by_entry: dict[int, list[Context]] = defaultdict(list)
+        for entry_row, context_row in rows:
+            entry_rows[entry_row.id] = entry_row
+            contexts_by_entry[entry_row.id].append(_context_from_row(context_row))
+
+        entries = [
+            _entry_from_row(entry_row, contexts_by_entry[entry_id])
+            for entry_id, entry_row in entry_rows.items()
+        ]
+        return [entry for entry in entries if entry.usable_contexts]
+
+
+def _entry_from_row(row: EntryRow, contexts: list[Context]) -> Entry:
+    """Reconstruye con el constructor normal, no con `Entry.new`: el estado es
+    el que está guardado, y puede ser el que puso el usuario (D-018)."""
+    return Entry(
+        term=row.term,
+        lemma=row.lemma,
+        lang=row.lang,
+        external_id=row.external_id,
+        status=EntryStatus(row.status),
+        contexts=contexts,
+    )
+
+
+def _context_from_row(row: ContextRow) -> Context:
+    # La tabla admite NULL en dos columnas que el dominio no admite; la
+    # ingesta escribe siempre las dos. Sin frase limpia no hay ejercicio, así
+    # que `""` la traduce a «no utilizable». Un `external_id` no tiene valor
+    # por defecto con sentido: si falta, es un error de datos y se dice.
+    assert row.external_id is not None, "todo contexto importado tiene external_id"
+    return Context(
+        external_id=row.external_id,
+        term=row.term,
+        raw_sentence=row.raw_sentence,
+        clean_sentence=row.clean_sentence or "",
+        is_truncated=row.is_truncated,
+        captured_at=row.captured_at,
+        pos=row.pos,
+        book_title=row.book_title,
+        book_lang=row.book_lang,
+    )
