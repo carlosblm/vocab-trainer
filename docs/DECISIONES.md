@@ -173,19 +173,42 @@ Es un fallo silencioso. La respuesta parece correcta a nivel de HTTP y rompería
 
 ## D-008 · Guarda de unidad léxica antes de generar cualquier ejercicio
 
-**Fecha**: 2026-09-07 · **Fase**: diseño (implementación en F0)
+**Fecha**: 2026-09-07 · **Fase**: diseño; implementada en F0.6, se conecta en F1
 
 **Decisión**: antes de construir un ejercicio, comprobar si la palabra consultada forma parte de una unidad léxica mayor en su contexto (phrasal verb, locución). Si es así, el ejercicio se construye sobre la unidad completa.
 
 **Descartado**: generar siempre sobre la palabra almacenada, que era el planteamiento implícito hasta la v1.2.
 
-**Por qué**: el Kindle guarda una sola palabra, pero el significado no siempre reside en ella. Ejemplo real del corpus: `eased` en *"electronics eased out hydraulics"*. La aplicación enseñaría *aliviar*, cuando `ease out` significa *desplazar*. **No es una funcionalidad ausente, es la aplicación enseñando algo falso.**
+**Por qué**: el Kindle guarda una sola palabra, pero el significado no siempre reside en ella. Ejemplo real del corpus: `come` en *come up with*. La aplicación enseñaría *venir*, cuando la unidad significa *idear*. **No es una funcionalidad ausente, es la aplicación enseñando algo falso.**
 
-**Incidencia medida**: 5 o 6 casos reales sobre las 845 consultas en inglés del corpus de agosto de 2026 (menos del 1 %). Bajo en volumen, grave en efecto.
+El caso que motivó la decisión fue `eased` en *"electronics eased out
+hydraulics"*: la aplicación enseñaría *aliviar*, cuando `ease out` significa
+*desplazar*. Al revisarlo en F0.6 resultó dudoso, porque *ease* también es
+«mover poco a poco».
 
-**El problema es la detección, no la generación.** Una regla de "palabra seguida de partícula" da **80 % de falsos positivos** sobre el corpus real (`sojourn in`, `stake in`, `tycoons in` son sustantivo más preposición). Orden previsto: dependencias de spaCy, después lista de phrasal verbs frecuentes, y LLM solo como último recurso porque tiende a los falsos positivos.
+**Incidencia medida** (F0.6, 2026-10-01): de los 13 contextos que marca R1
+(«Lo aprendido en F0.6») sobre las 1.024 consultas en inglés de la exportación
+de septiembre de 2026, 5 son positivos claros y 3 dudosos. Los falsos negativos,
+lo que R1 no marca, no se midieron. Bajo en volumen, grave en efecto.
 
-**Sin verificar**: la precisión del análisis de dependencias sobre este corpus. Es el primer número a medir en la F0.
+**El problema es la detección, no la generación.** La regla ingenua, **R0** —la
+palabra consultada va seguida de un token que el etiquetador de spaCy marca
+como `RP` (partícula) o `IN` (preposición o conjunción subordinante), sin mirar
+el análisis de dependencias—, marca **206 de las 1.024** consultas en inglés de
+la exportación de septiembre de 2026 (`sojourn in`, `stake in`, `tycoons in` son
+sustantivo más preposición). La cifra que había aquí, un 80 % de falsos
+positivos, no se pudo reproducir: la definición de la regla no quedó escrita.
+
+**Capas**: la implementada es R1, sobre el análisis de dependencias de spaCy
+(F0.6). La opacidad de los verbos con preposición, que R1 no ve, se decide en F1
+con la fuente de definiciones (punto 3 de «Pendiente en F1»). La lista de
+phrasal verbs frecuentes, que era la segunda capa prevista, ya no lo es: marcaría
+igual *came across a letter* y *a bridge*. El LLM sigue siendo el último
+recurso, porque tiende a los falsos positivos.
+
+**Verificado en F0.6, sin medición formal**: el análisis de dependencias separa
+la partícula de la preposición cuando la diferencia es sintáctica, pero no ve la
+opacidad semántica. Detalle y motivo en «Lo aprendido en F0.6».
 
 El riesgo no viene de frases truncadas —solo el 0,7 % lo están— sino de la suciedad de maquetación: notas al pie (`[59]`, `[`) y espacios sobrantes en el 98,5 % de las frases. El análisis se ejecuta sobre la frase ya limpia, así que la limpieza es una precondición de la detección, no un paso independiente.
 
@@ -197,11 +220,69 @@ construir un ejercicio». Se acepta porque no muestra ningún significado y la
 partícula queda visible en la frase («Electronics _____ out hydraulics»): no
 puede enseñar un significado falso, que es el daño que esta guarda previene.
 
+**Lo aprendido en F0.6 (2026-10-01)**:
+
+- **La regla, R1**: la palabra consultada tiene un dependiente con la relación
+  `prt`, pegado a ella o separado por el objeto («eased the hydraulics out»). Se
+  mira la primera aparición, con la misma función que usa el normalizador, así
+  que la guarda habla del mismo token del que salen `pos` y `morph`. Vive en
+  `adapters/nlp/lexical_unit.py` porque `prt` es una etiqueta del esquema de
+  `en_core_web_sm`: un núcleo privado sobre el `Token` y un envoltorio por lotes
+  sobre `list[CleanedLookup]`, emparejado por `external_id`, que devuelve la
+  partícula o `None`.
+- **Resultado**: R1 marca **13 de las 1.024** consultas en inglés, frente a las
+  206 de R0. Revisados a mano con la pregunta «¿enseñar la palabra sola daría un
+  significado falso en esta frase?»:
+
+  | Revisión | Contextos | Casos |
+  |---|---|---|
+  | Sí | 5 | `perked up`, `come up (with)`, `hung up`, `stamp out`, `belly-up` |
+  | Duda | 3 | `eased out`, `lever up`, `patch up` |
+  | No | 5 | `chewed up`, `spit out`, `sponged up`, `gulped down`, `slinking up` |
+
+  Los negativos son sobre todo partículas aspectuales o de dirección: el
+  significado sigue en el verbo. `slinking up` es un error del analizador: en
+  *up the staircase*, `up` es preposición de lugar.
+- **Por qué ese nivel de falsos positivos es aceptable**: los composicionales
+  son la mitad de los casos decididos (5 de 10; contando los dudosos, entre 5 y
+  8 de 13). Un falso positivo hace buscar la definición de la unidad (`gulp
+  down` en vez de `gulp`), que sigue siendo correcta. El daño grave es el falso
+  negativo: enseñar la palabra sola con un significado falso.
+- **Lo que la sintaxis no ve**: el analizador no distingue la opacidad
+  semántica. *came across an old letter* (encontrar) y *came across an old
+  bridge* (cruzar) reciben el mismo análisis, con `across` como preposición, y
+  ninguno se marca. *carried out the experiment* (realizar) y *carried out the
+  boxes* (sacar) reciben también el mismo, con `out` como partícula, y se
+  marcan los dos.
+- **Por qué no se midió formalmente**: el problema afecta a unos 5 o 6 casos
+  reales del corpus. Con tan pocos positivos, cualquier métrica tendría un
+  intervalo tan ancho que no permitiría elegir entre reglas: un solo caso mueve
+  la exhaustividad entre 17 y 20 puntos. Lo útil de la medición —que la sintaxis
+  no cubre la opacidad semántica— salió de inspeccionar cuatro casos reales y
+  pares mínimos inventados. Lo que R1 no marca no se revisó, así que los falsos
+  negativos quedan sin medir.
+- **La guarda no se conecta ni se persiste en F0.6.** Su consumidor es
+  `mcq_definition`, en F1, y la forma del dato se decide con él delante, como en
+  D-020.
+
+**Pendiente en F1**:
+
+1. `mcq_definition` consume la guarda: si hay partícula, busca la definición de
+   la unidad completa. Si la unidad no está en la fuente de definiciones, vuelve
+   a la palabra sola; si no, el falso positivo deja de ser barato.
+2. La unidad puede tener más de dos piezas: *come up with*.
+3. La opacidad de los verbos con preposición (*came across a letter* frente a
+   *a bridge*) **no** la resuelve una lista: la marcaría igual en los dos casos,
+   y ahí el falso positivo sí enseña un significado falso. Requiere desambiguar
+   por contexto, comparte la dependencia de una fuente léxica de §5.4 y §11
+   (pregunta 5), y se decide en F1 junto con la fuente de definiciones.
+4. La métrica D8 del arnés de F2 mide el daño residual sobre ejercicios reales.
+
 ---
 
 ## D-009 · `preposition_cloze` entra en la v1 y no usa IA
 
-**Fecha**: 2026-09-07 · **Fase**: diseño (implementación en F0)
+**Fecha**: 2026-09-07 · **Fase**: diseño (implementación tras F2; ver «Aplazamiento»)
 
 **Decisión**: añadir un tipo de ejercicio que tapa la preposición que sigue a la palabra consultada, con distractores tomados de un conjunto cerrado de preposiciones. **Sin ninguna llamada a un modelo.**
 
@@ -209,7 +290,13 @@ puede enseñar un significado falso, que es el daño que esta guarda previene.
 
 **Por qué entra en la v1**:
 
-- **Cobertura**: 178 de 845 consultas en inglés (**21 %**) tienen la palabra seguida de preposición, medido sobre el corpus de agosto de 2026. Frente al <1 % de los phrasal verbs, hay volumen de sobra.
+- **Cobertura**: con la regla R0 de D-008, 206 de las 1.024 consultas en inglés
+  de la exportación de septiembre de 2026 (**20 %**) tienen la palabra seguida
+  de un token `IN` o `RP`. Es una cota superior: 182 son preposiciones, 15
+  conjunciones subordinantes (`IN` con categoría `SCONJ`) y 9 partículas.
+  Frente a los phrasal verbs —al menos 5 casos claros en 1.024, con los falsos
+  negativos sin medir (D-008)—, hay volumen de sobra. La cifra que había aquí, 178 de 845 sobre agosto, no se reproduce: ninguna de tres definiciones
+  probadas la da (166, 152 y 186).
 - **Coste**: horas de trabajo. Es sustitución de cadena, igual que `cloze_original`.
 - **Fiabilidad**: la respuesta correcta está literalmente en la frase. No hay nada que alucinar.
 - **Valor pedagógico**: las preposiciones en inglés no se deducen, se memorizan por colocación, y son un fallo persistente en hispanohablantes de nivel intermedio.
@@ -219,6 +306,16 @@ puede enseñar un significado falso, que es el daño que esta guarda previene.
 **Riesgo conocido**: no toda preposición que sigue a una palabra es una colocación. En *"proved resilient after the flood"*, `after` pertenece a la estructura de la oración y no a `resilient`; un ejercicio ahí enseñaría una asociación falsa. Se distingue con análisis de dependencias de spaCy y se mide con **D9**.
 
 **Consecuencia sobre el proyecto**: la proporción de la aplicación que no requiere modelos sube por encima del 70 %. Refuerza el argumento central de §5: la decisión por defecto es no usar un LLM.
+
+**Aplazamiento (2026-10-01)**: se implementa después de F2, no en F0. Motivo:
+calendario y dependencias. F0 estaba planificada en una semana y ha llevado
+casi tres, y §9 sitúa en F0–F2 en torno al 70 % del valor profesional del
+proyecto. `preposition_cloze` no es requisito de nada: no lo necesita ningún
+ejercicio de F1 ni el arnés de F2. Y la promesa de §2.3 —que la aplicación sea
+utilizable sin modelo desde el primer día— ya la cumple `cloze_original`, en sus
+dos variantes. Se retoma tras F2; el patrón de la guarda de D-008 (núcleo sobre
+`Token` y envoltorio por lotes) sirve de base para detectar la preposición que
+depende de la palabra.
 
 ---
 

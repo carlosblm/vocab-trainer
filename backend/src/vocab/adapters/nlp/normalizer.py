@@ -3,8 +3,10 @@
 Implementa `ports.normalizer.Normalizer`. El lema y la categoría de una
 palabra dependen de su frase.
 
-Todo lo que sabe de spaCy vive aquí: qué modelo corresponde a cada idioma,
-cuándo se carga y qué forma tienen las tuplas que espera `nlp.pipe`.
+Todo lo que sabe de spaCy vive en este paquete: qué modelo corresponde a cada
+idioma, cuándo se carga, qué token de la frase es la palabra consultada y qué
+forma tienen las tuplas que espera `nlp.pipe`. El cargador y la localización
+del token los comparte con la guarda de unidad léxica (`lexical_unit`).
 """
 
 from collections import defaultdict
@@ -13,6 +15,7 @@ from functools import lru_cache
 
 import spacy
 from spacy.language import Language
+from spacy.tokens import Doc, Token
 
 from vocab.ports.normalizer import CleanedLookup, NormalizedWord
 
@@ -59,19 +62,8 @@ def _normalize_group(group: list[CleanedLookup], lang: str) -> list[NormalizedWo
     result: list[NormalizedWord] = []
 
     for doc, item in nlp.pipe(_as_pipe_input(group), as_tuples=True):
-        target = item.word.lower()
-        for token in doc:
-            if token.text.lower() == target:
-                result.append(
-                    NormalizedWord(
-                        external_id=item.external_id,
-                        lemma=token.lemma_.lower(),
-                        pos=token.pos_,
-                        morph=str(token.morph),
-                    )
-                )
-                break
-        else:
+        token = _first_occurrence(doc, item.word)
+        if token is None:
             # Token no localizado: se degrada a la palabra en minúsculas y se
             # marca con `pos = None` y `morph = None`. Nunca se descarta — el
             # puerto promete un resultado por entrada.
@@ -83,5 +75,26 @@ def _normalize_group(group: list[CleanedLookup], lang: str) -> list[NormalizedWo
                     morph=None,
                 )
             )
+        else:
+            result.append(
+                NormalizedWord(
+                    external_id=item.external_id,
+                    lemma=token.lemma_.lower(),
+                    pos=token.pos_,
+                    morph=str(token.morph),
+                )
+            )
 
     return result
+
+
+def _first_occurrence(doc: Doc, word: str) -> Token | None:
+    """La palabra consultada dentro de su frase: la primera aparición, por
+    texto en minúsculas.
+
+    La comparten el normalizador y la guarda de unidad léxica. Tiene que ser
+    una sola función: si cada uno buscara a su manera, en las frases que
+    repiten la palabra `pos`/`morph` y la guarda hablarían de tokens distintos.
+    """
+    target = word.lower()
+    return next((token for token in doc if token.text.lower() == target), None)

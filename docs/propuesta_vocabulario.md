@@ -1,7 +1,7 @@
 # Propuesta técnica — Aplicación de estudio de vocabulario
 
 **Documento de contexto del proyecto**
-Autor: Carlos Blázquez Martín · Versión 1.6 · Septiembre 2026
+Autor: Carlos Blázquez Martín · Versión 1.7 · Octubre 2026
 
 ---
 
@@ -54,7 +54,7 @@ La información valiosa que el Kindle sí guarda y no explota es **la frase conc
 | `phrasal_verb` | Hueco sobre verbo y partícula, o elección de la partícula correcta. | Determinista + IA | Abierto (§2.5) |
 | `sense_discrimination` | Ejercicios sobre acepciones de la palabra que **no** aparecen en el libro. | IA | Abierto (§5.4) |
 
-`cloze_original` y `preposition_cloze` funcionan sin ninguna llamada a un modelo. Esto es deliberado: garantiza que la aplicación sea utilizable desde el primer día y que nunca falle por una caída del proveedor de LLM.
+`cloze_original` y `preposition_cloze` funcionan sin ninguna llamada a un modelo. Esto es deliberado: garantiza que la aplicación nunca falle por una caída del proveedor de LLM. Que sea utilizable desde el primer día lo cumple `cloze_original`, en sus dos variantes; `preposition_cloze` sigue en la v1, pero se implementa tras F2 (D-009).
 
 **Sobre `preposition_cloze`.** Es el ejercicio con mejor relación entre valor y coste de todo el proyecto. La respuesta correcta ya está en la frase, y los distractores son otras preposiciones tomadas de un conjunto cerrado de unas cuarenta, ponderado por la frecuencia observada en el propio corpus del usuario. No hay nada que generar, así que no hay nada que pueda alucinar.
 
@@ -69,18 +69,18 @@ La aplicación es útil sin conexión a ningún servicio externo: el ejercicio d
 
 ### 2.5 Unidades léxicas multipalabra
 
-**El problema.** El Kindle guarda una sola palabra, pero el significado no siempre reside en ella. Si el usuario consulta `eased` en *"electronics eased out hydraulics"*, la base de datos almacena `eased` con lema `ease`. Un ejercicio construido sobre esa palabra enseñaría *aliviar* o *facilitar*, cuando el significado real de `ease out` es *desplazar*.
+**El problema.** El Kindle guarda una sola palabra, pero el significado no siempre reside en ella. Si el usuario consulta `come` en *come up with*, la base de datos almacena `come`. Un ejercicio construido sobre esa palabra enseñaría *venir*, cuando la unidad significa *idear*. El caso que motivó la guarda fue `eased` en *"electronics eased out hydraulics"*: enseñaría *aliviar* o *facilitar*, cuando `ease out` significa *desplazar*. Al revisarlo en F0.6 resultó dudoso, porque *ease* también es «mover poco a poco».
 
 **Esto no es una funcionalidad que falta: es la aplicación enseñando algo falso.** Por eso la guarda es obligatoria y no opcional.
 
-**La guarda (obligatoria, F0).** Antes de generar cualquier ejercicio, determinar si la palabra consultada forma parte de una unidad léxica mayor en su contexto. Si es así, el ejercicio se construye sobre la unidad completa.
+**La guarda (obligatoria; implementada en F0.6, se conecta en F1).** Antes de generar cualquier ejercicio, determinar si la palabra consultada forma parte de una unidad léxica mayor en su contexto. Si es así, el ejercicio se construye sobre la unidad completa.
 
 **El tipo de ejercicio (abierto, F7).** `phrasal_verb`: hueco que cubre verbo y partícula, o elección de la partícula correcta entre varias. Depende de disponer de una fuente léxica fiable, igual que §5.4.
 
-**El problema difícil es la detección, no la generación.** Una regla ingenua de "palabra seguida de partícula" da un **80 % de falsos positivos** sobre el corpus real: `sojourn in`, `gravestones in`, `stake in` o `tycoons in` son sustantivo más preposición, no verbos frasales. Enfoque previsto, en este orden:
+**El problema difícil es la detección, no la generación.** Una regla ingenua —la palabra va seguida de un token que el etiquetador de spaCy marca como partícula (`RP`) o como preposición o conjunción subordinante (`IN`)— marca **206 de las 1.024** consultas en inglés de septiembre de 2026, frente a 13 del análisis de dependencias (D-008): `sojourn in`, `gravestones in`, `stake in` o `tycoons in` son sustantivo más preposición, no verbos frasales. Enfoque, en este orden:
 
-1. **Análisis de dependencias con spaCy.** En inglés la partícula de un verbo frasal lleva una relación de dependencia distinta de la de una preposición ordinaria. Es determinista y separa `eased out` de `stake in`. *No está confirmada su precisión sobre este corpus; hay que medirla.*
-2. **Lista de phrasal verbs frecuentes** como refuerzo. Muy fiable para los comunes, nula para los raros.
+1. **Análisis de dependencias con spaCy (implementado en F0.6).** En inglés la partícula de un verbo frasal lleva una relación de dependencia distinta de la de una preposición ordinaria. Es determinista y separa `eased out` de `stake in`. *Verificado en F0.6, sin medición formal: separa la partícula de la preposición cuando la diferencia es sintáctica, pero no ve la opacidad semántica (D-008).*
+2. **La opacidad de los verbos con preposición se decide en F1**, con la fuente de definiciones. El análisis de dependencias no la ve: *came across a letter* y *came across a bridge* reciben el mismo análisis. Una lista de phrasal verbs, que era la capa prevista aquí, ya no lo es: marcaría igual los dos casos (D-008, «Pendiente en F1»).
 3. **LLM solo como último recurso.** Preguntar a un modelo si algo es un phrasal verb tiende a producir falsos positivos, así que no puede ser la primera línea.
 
 **Relación con §5.4.** Un phrasal verb es un caso particular del problema de desambiguación de acepción: la unidad de significado no coincide con la palabra almacenada. Ambos comparten la misma dependencia de una fuente léxica.
@@ -514,7 +514,7 @@ Ritmo asumido: 10–20 h semanales, en paralelo a la búsqueda activa de empleo.
 
 | Fase | Semanas | Entregable | Material de entrevista que desbloquea |
 |---|---|---|---|
-| **F0 · Cimientos** | 1 | Ingesta a Postgres, normalización con spaCy, limpieza, recorte de frases. `compose` completo. CLI que muestra `cloze_original`. | Ingesta y calidad de datos sobre datos reales y sucios. |
+| **F0 · Cimientos** | 1 (real: del 7 de septiembre al 1 de octubre de 2026) | Ingesta a Postgres, normalización con spaCy, limpieza, recorte de frases. `compose` completo. CLI que muestra `cloze_original`. | Ingesta y calidad de datos sobre datos reales y sucios. |
 | **F1 · Primera IA** | 2–3 | Generación de distractores (A1) con salida Pydantic, validadores D1–D4, bucle de reintento y degradación. Sigue siendo CLI. | Salidas estructuradas, validación, reintento con feedback, diseño de la degradación. |
 | **F2 · Medición** | 3–4 | Langfuse integrado. Arnés de evaluación con 100 casos y métricas deterministas. Informe versionado. | Evaluación de LLMs, coste y latencia por petición, metodología propia. **El diferenciador.** |
 | **F3 · Producto** | 4–5 | API FastAPI, interfaz Angular mínima, FSRS conectado. **La aplicación pasa a ser usable a diario.** | Sistema completo de extremo a extremo. |
