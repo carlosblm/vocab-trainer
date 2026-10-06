@@ -51,7 +51,9 @@ known-first-party = ["vocab"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# `.` deja importar los dobles compartidos como `tests.unit.doubles`: un doble
+# por puerto en un solo sitio, sin copias que dejen de cumplirlo (D-023).
+pythonpath = ["src", "."]
 
 [tool.mypy]
 python_version = "3.12"

@@ -9,13 +9,42 @@ configuración lo produjo (§3.3.4, regla 4).
 
 Sin nada de terceros. El esquema con el que el adaptador pida al proveedor la
 salida estructurada (D-004) es asunto del adaptador; por esta frontera solo
-cruzan dataclasses y las dos excepciones del puerto.
+cruzan dataclasses, `Violation` del dominio y las dos excepciones del puerto.
+
+El motivo de un reintento cruza como datos, no como texto. El texto que lea el
+modelo lo escribe el adaptador con las plantillas del prompt, en su idioma y
+versionado con él (D-007, regla 3).
 """
 
 from dataclasses import dataclass
 from typing import Protocol
 
 from vocab.domain.cleaning import CleanSentence
+from vocab.domain.distractor_validation import Violation
+
+
+@dataclass(frozen=True)
+class RejectedDistractors:
+    """Motivo de un reintento: los distractores anteriores no pasaron la
+    validación.
+
+    `previous` viaja porque cada llamada al modelo es independiente: sin los
+    distractores anteriores, «el distractor 2 es una negación» no significa
+    nada. `violations` son los códigos e índices del validador, que apuntan a
+    posiciones de `previous`.
+    """
+
+    previous: tuple[str, str, str]
+    violations: tuple[Violation, ...]
+
+
+@dataclass(frozen=True)
+class MalformedAnswer:
+    """Motivo de un reintento: la respuesta anterior no tenía la forma
+    esperada. `reason` es el de la `MalformedOutput` que lanzó el propio
+    adaptador."""
+
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -36,9 +65,10 @@ class DistractorRequest:
       falsos respecto a ella.
     - `lang` permite elegir el prompt, que se indexa por tarea, idioma y
       versión (§3.3.4, regla 3).
-    - `feedback` es el motivo del fallo anterior, que se inyecta en el
-      reintento (§7.3); `None` en el primer intento. Un reintento es la misma
-      petición con otro `feedback`: `dataclasses.replace(request, feedback=…)`.
+    - `retry` es el motivo del reintento (§7.3); `None` en el primer intento.
+      Es una unión para que no se pueda construir una petición con los dos
+      motivos a la vez. Un reintento es la petición original con el motivo
+      del último fallo: `dataclasses.replace(request, retry=…)`.
     """
 
     term: str
@@ -47,7 +77,7 @@ class DistractorRequest:
     sentence: CleanSentence
     definition: str
     lang: str
-    feedback: str | None = None
+    retry: RejectedDistractors | MalformedAnswer | None = None
 
 
 @dataclass(frozen=True)
@@ -72,9 +102,9 @@ class GeneratorUnavailable(Exception):
 
     También cuando el proveedor responde con un error (un 5xx, un modelo que
     no tiene cargado) en lugar de una salida: no hay nada que examinar. Nada
-    de esto dice que la petición estuviera mal, así que su `reason` no sirve
-    como `feedback`. Si se reintenta o se degrada a la plantilla (§7.3) lo
-    decide quien llama.
+    de esto dice que la petición estuviera mal, así que no hay motivo que
+    devolver al modelo. Su `reason` es para avisar de la degradación: un
+    nombre de modelo mal escrito no debe degradar en silencio.
     """
 
     def __init__(self, reason: str) -> None:
@@ -88,8 +118,8 @@ class MalformedOutput(Exception):
 
     Por ejemplo, la salida no se puede parsear, trae dos distractores o
     cuatro, o mezcla el razonamiento con el contenido (D-004). Es un fallo de
-    forma, no de contenido, y su `reason` está escrito para que pueda volver
-    como `feedback` en el reintento.
+    forma, no de contenido, y su `reason` vuelve al adaptador en el reintento
+    como `MalformedAnswer`.
     """
 
     def __init__(self, reason: str) -> None:
@@ -119,6 +149,10 @@ class DistractorGenerator(Protocol):
         se filtre en un distractor (D1), que coincida la categoría gramatical
         (D2), que no haya antónimos ni negaciones triviales (D7) y cualquier
         otra métrica de §6.1. Lo hacen los validadores de quien llama, que
-        deciden si piden otro intento con `feedback`.
+        deciden si piden otro intento con `retry`.
+
+        Con `retry`, el adaptador explica al modelo por qué repite: los
+        distractores anteriores y qué falló en cada uno, o por qué no se pudo
+        leer su respuesta.
         """
         ...
