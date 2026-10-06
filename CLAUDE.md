@@ -99,3 +99,5 @@ ni uses `pip install` directamente.
 - Sí avísame cuando un cambio los deje desactualizados: una cifra que ya no
   cuadra, una decisión nueva sin entrada, un campo del modelo de datos que
   cambió. Dime qué archivo y qué apartado, y sigue con la tarea.
+- Si una decisión la tomas tú, preséntala como tuya. No me atribuyas
+  decisiones que no he tomado.
