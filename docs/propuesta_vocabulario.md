@@ -1,7 +1,7 @@
 # Propuesta técnica — Aplicación de estudio de vocabulario
 
 **Documento de contexto del proyecto**
-Autor: Carlos Blázquez Martín · Versión 1.7 · Octubre 2026
+Autor: Carlos Blázquez Martín · Versión 1.8 · Octubre 2026
 
 ---
 
@@ -80,7 +80,7 @@ La aplicación es útil sin conexión a ningún servicio externo: el ejercicio d
 **El problema difícil es la detección, no la generación.** Una regla ingenua —la palabra va seguida de un token que el etiquetador de spaCy marca como partícula (`RP`) o como preposición o conjunción subordinante (`IN`)— marca **206 de las 1.024** consultas en inglés de septiembre de 2026, frente a 13 del análisis de dependencias (D-008): `sojourn in`, `gravestones in`, `stake in` o `tycoons in` son sustantivo más preposición, no verbos frasales. Enfoque, en este orden:
 
 1. **Análisis de dependencias con spaCy (implementado en F0.6).** En inglés la partícula de un verbo frasal lleva una relación de dependencia distinta de la de una preposición ordinaria. Es determinista y separa `eased out` de `stake in`. *Verificado en F0.6, sin medición formal: separa la partícula de la preposición cuando la diferencia es sintáctica, pero no ve la opacidad semántica (D-008).*
-2. **La opacidad de los verbos con preposición se decide en F1**, con la fuente de definiciones. El análisis de dependencias no la ve: *came across a letter* y *came across a bridge* reciben el mismo análisis. Una lista de phrasal verbs, que era la capa prevista aquí, ya no lo es: marcaría igual los dos casos (D-008, «Pendiente en F1»).
+2. **La opacidad de los verbos con preposición se decidió en F1, de forma conservadora (D-025).** El análisis de dependencias no la ve: *came across a letter* y *came across a bridge* reciben el mismo análisis. Una lista de phrasal verbs, que era la capa prevista aquí, ya no lo es: marcaría igual los dos casos (D-008, «Pendiente en F1»). En F1, `mcq_definition` solo se genera cuando el lema tiene un único sentido en la fuente de definiciones, así que un verbo con varias lecturas va a `cloze_original`. Se revisa en F4.
 3. **LLM solo como último recurso.** Preguntar a un modelo si algo es un phrasal verb tiende a producir falsos positivos, así que no puede ser la primera línea.
 
 **Relación con §5.4.** Un phrasal verb es un caso particular del problema de desambiguación de acepción: la unidad de significado no coincide con la palabra almacenada. Ambos comparten la misma dependencia de una fuente léxica.
@@ -150,7 +150,7 @@ Coste de hacerlo ahora: bajo, del orden de medio día. Coste de hacerlo después
 |---|---|
 | PostgreSQL desde el día 1, no SQLite | Migrar después cuesta más que empezar bien |
 | Toda la configuración por variables de entorno | Cero rutas absolutas, cero credenciales en código |
-| Todo en contenedores desde el día 1 | Lo que corre en local es la misma imagen que en producción |
+| Lo que se despliega va en contenedores desde el día 1. El bucle de desarrollo corre en `.venv` (D-011) y Ollama, nativo en WSL2 (D-024) | Lo que corre en local es la misma imagen que en producción |
 | El proveedor de LLM detrás de una interfaz | Cambiar de Ollama a una API es una variable de entorno |
 | Migraciones con Alembic | El esquema es código versionado |
 | Almacenamiento de ficheros por interfaz | Disco en local, almacenamiento de objetos en producción |
@@ -192,7 +192,7 @@ LLM_TASK__JUEZ__THINK=true
 LLM_TASK__JUEZ__PROMPT_VERSION=v2
 ```
 
-El dominio invoca `llm.run("distractores", entrada)` y no conoce el modelo, el proveedor ni el endpoint.
+Cada tarea tiene su propio puerto (en F1, `DistractorGenerator`), y lo llama la capa `application/`. El modelo de cada tarea se resuelve en la raíz de composición, que construye el adaptador con la configuración de su tarea. Quien llama no conoce el modelo, el proveedor ni el endpoint (D-026).
 
 **Cuatro reglas que lo hacen efectivo:**
 
@@ -305,6 +305,7 @@ Esta es la sección central del documento. La decisión por defecto es **no usar
 | Ejercicio de hueco original | **No** | Sustitución de cadena | La palabra está en la frase el 100 % de las veces (§4.1). |
 | Corrección de la respuesta del usuario | **No** | Comparación de cadenas | Determinista por definición. |
 | Traducción de la palabra | **No** | API de diccionario | Más barato, más rápido y más fiable que un LLM. |
+| Definición correcta | **No** | Open English WordNet | Local, reproducible y sin coste (D-025). |
 | **Distractores plausibles** | **Sí** | LLM + validación | §5.2 |
 | **Frases nuevas de práctica** | **Sí** | LLM + validación | §5.2 |
 | **Validador semántico (juez)** | **Sí** | LLM | §5.2 |
@@ -325,6 +326,8 @@ Estimación: entre el 60 % y el 70 % del sistema no ejecuta ninguna llamada a un
 **Honestidad sobre esta decisión**: *no estoy seguro de que el LLM gane a un enfoque con embeddings más filtro por categoría gramatical*. Podría ser comparable y mucho más barato. Esto es una virtud del proyecto, no un problema: da una comparativa real que medir con el conjunto de evaluación, y "probé las dos y estos son los números" es una respuesta mucho mejor que "usé un LLM".
 
 **Dependencia importante.** Para generar buenos distractores hay que saber en qué acepción se usa la palabra en esa frase. En el corpus real aparece «Salvo los internados en un manicomio», donde "salvo" es preposición y no el verbo salvar. Los distractores de una acepción no sirven para la otra. Por tanto, **una desambiguación mínima de acepción es un requisito implícito de A1**, aunque no figure como funcionalidad visible.
+
+**En F1 se resuelve sin desambiguar**: `mcq_definition` solo se genera en los contextos cuyo lema tiene un único sentido en su categoría (D-025). La selección de sentido va a F4.
 
 #### A2 — Generación de frases nuevas de práctica
 
@@ -385,7 +388,7 @@ Se calculan con código, sin llamar a ningún modelo. Son el equivalente a la m�
 | D4 | Presencia del término | En frases generadas, el término aparece con una flexión válida |
 | D5 | Fidelidad al contexto | En `cloze_original`, la frase coincide carácter a carácter con la del libro |
 | D6 | No repetición | El ejercicio no duplica uno mostrado en los últimos N días |
-| D7 | Distractores no triviales | Distractores que son antónimos o negaciones de la respuesta correcta y se descartan sin conocer la palabra (detectado en §12.4) |
+| D7 | Distractores no triviales | Distractores que son antónimos o negaciones de la respuesta correcta y se descartan sin conocer la palabra (detectado en §12.4). La parte determinista detecta negaciones explícitas, con una lista cerrada por idioma; los antónimos léxicos quedan para J2 (D-027) |
 | D8 | Unidad léxica correcta | Ejercicios generados sobre una palabra que en su contexto formaba parte de una unidad mayor (phrasal verb, locución). Error grave: enseña un significado falso |
 | D9 | Colocación real | En `preposition_cloze`, ejercicios donde la preposición no depende sintácticamente de la palabra objetivo, sino de la estructura de la frase |
 
@@ -425,19 +428,20 @@ Cada elección lleva su justificación. La columna "Demanda" refleja el número 
 |---|---|---|---|
 | Lenguaje del backend | **Python 3.12** | 25/29 | Estándar absoluto en IA. Es donde está el ecosistema y el mercado. |
 | Framework del backend | **FastAPI** | — | Estándar de facto para servicios de IA. Tipado, validación con Pydantic y OpenAPI automático. |
-| Validación y esquemas | **Pydantic v2** | — | Base de las salidas estructuradas. Un modelo que no puede rellenar el esquema es un fallo detectado antes de mirar el contenido. |
+| Validación y esquemas | **Pydantic v2** | — | Base de las salidas estructuradas. Un modelo que no puede rellenar el esquema es un fallo detectado antes de mirar el contenido. Vive en el adaptador: el puerto usa tipos de la biblioteca estándar (D-026). |
 | Base de datos | **PostgreSQL 16** | 10/29 | Desde el día 1. La extensión `pgvector` queda disponible por si A2 o §5.4 requieren búsqueda semántica. |
 | ORM y migraciones | **SQLAlchemy 2 + Alembic** | — | Estándar del ecosistema Python. |
 | Frontend | **Angular + TypeScript** | 7/29 (TS) | El autor ya lo domina: coste de aprendizaje cero. La interfaz no es donde está el valor del proyecto. |
 | Modelo local | **Qwen3.5-4B (Q4) sobre Ollama** | — | Validado en §12. Frente a Qwen3-4B: la mitad de tokens, respeta el idioma del prompt y acepta `think:false` de verdad. |
 | Endpoint local | **`/api/chat` nativo con `format`** | — | **No** el endpoint `/v1/` compatible con OpenAI: no propaga `think` y, con Qwen3, `think:false` mueve el razonamiento al campo `content` en lugar de suprimirlo (§12.3). |
-| Cliente de LLM | Interfaz propia `LLMProvider` + registro de tareas | — | Adaptador nativo de Ollama y adaptador OpenAI. La configuración se resuelve por tarea (§3.3.4), no globalmente. Es obligatoria porque los dos endpoints no son intercambiables. |
+| Cliente de LLM | Un puerto por tarea + configuración por tarea en la raíz de composición | — | Adaptador nativo de Ollama y adaptador OpenAI detrás de cada puerto, porque los dos endpoints no son intercambiables (D-004). La configuración se resuelve por tarea (§3.3.4), no globalmente (D-026). |
 | NLP | **spaCy** | 6/29 (NLP) | Lematización, categoría gramatical y segmentación de frases. Ya figura en el CV del autor. |
+| Fuente léxica | **Open English WordNet** (`oewn:2025`) vía `wn` | — | CC BY 4.0, local (D-025). |
 | Repetición espaciada | **`fsrs`** (PyPI, v6.3.2) | — | Algoritmo publicado y mantenido. Reimplementarlo sería tiempo perdido. |
 | Observabilidad | **Langfuse** (autohospedado) | 10/29 | Trazas, coste y latencia por petición. Open source, se levanta en el mismo `compose`. |
 | Orquestación | **LangGraph** | 7/29 | **Solo** en el bucle de generación (§7.3), a partir de la fase F5. Nunca en un flujo lineal. |
 | Evaluación | **pytest** + arnés propio | 6/29 (evals) | El arnés propio traslada la metodología del TFM y es más defendible que una herramienta genérica. |
-| Contenedores | **Docker + Compose** | 9/29 | Todo, desde el primer commit. |
+| Contenedores | **Docker + Compose** | 9/29 | Lo que se despliega, desde el primer commit; el desarrollo corre en `.venv` (D-011) y Ollama, nativo (D-024). |
 | Integración continua | **GitHub Actions** | 7/29 | Tests, linter y ejecución del arnés de evaluación en cada PR. |
 | Producción | **Azure Container Apps** | 11/29 (Azure) | Azure es el proveedor más pedido en la muestra analizada. Alternativas equivalentes: Railway, Fly.io, Hetzner. |
 
@@ -461,17 +465,23 @@ Selector FSRS (código)
       ↓
 Recuperación de contexto (SQL)
       ↓
-Generador (LLM, salida Pydantic)  ←──────┐
-      ↓                                   │
-Validadores deterministas (D1–D6)         │ reintento con el motivo
-      ↓                                   │ del fallo inyectado
-Validador semántico (juez, J1–J3)  ───────┘  (máximo 2)
-      ↓ si pasa            ↓ si falla 2 veces
+Generador (LLM, salida Pydantic)  ←───────┐
+      ↓                                   │ reintento con el motivo
+Validadores deterministas                 │ del último fallo
+(básico, D1, D7)                          │ (intento inicial y,
+      ↓                                   │ como máximo, 2 reintentos)
+Validador semántico (juez, J1–J3)  ───────┘
+      ↓ si pasa            ↓ tras 3 intentos fallidos,
+      ↓                    ↓ o si el proveedor no responde (sin reintentar)
   Ejercicio          Plantilla determinista
    al usuario        (distractores del propio vocabulario)
 ```
 
-**El camino de degradación no es opcional.** El usuario nunca ve un error: si el modelo falla dos veces, recibe un ejercicio de plantilla, peor pedagógicamente pero siempre funcional. Diseñar la degradación es lo que separa un sistema de una demo.
+**El camino de degradación no es opcional.** El usuario nunca ve un error: tras tres intentos fallidos, o si el proveedor no responde, recibe un ejercicio de plantilla, peor pedagógicamente pero siempre funcional. Diseñar la degradación es lo que separa un sistema de una demo.
+
+**Reintentos (D-028).** Un intento inicial y, como máximo, dos reintentos. Cada reintento lleva solo el motivo del último fallo, como datos: los distractores rechazados y sus violaciones, o por qué la salida no se pudo leer. El texto que lee el modelo lo escribe el adaptador con las plantillas del prompt. Si el proveedor no responde, se pasa a la plantilla sin reintentar y se conserva el motivo para avisar; los reintentos de errores de transporte pasajeros son del adaptador.
+
+**Validadores deterministas de F1 (D-027)**: el básico (distractores vacíos o repetidos), D1 y D7. El juez entra en F4.
 
 ---
 
@@ -487,15 +497,16 @@ Un único `docker compose up` levanta:
 | `web` | Angular |
 | `db` | PostgreSQL |
 | `langfuse` + su base de datos | Observabilidad |
-| `ollama` | Modelo local sobre WSL2 con acceso a la GPU (validado, §12.1) |
 
-El servicio `ollama` es el único que se sustituye en producción por una variable de entorno apuntando a un proveedor externo. Los demás son idénticos.
+**Ollama queda fuera de compose (D-024).** Corre nativo en WSL2 con acceso a la GPU, que es la instalación validada en §12.1, y la aplicación lo localiza por variable de entorno. No forma parte del artefacto desplegable: es un servicio de respaldo.
+
+En producción, Ollama se sustituye por un proveedor externo y `db` por un Postgres gestionado (§8.2). Los demás servicios son idénticos.
 
 ### 8.2 Qué cambia al desplegar
 
 Solo esto:
 
-1. `LLM_BASE_URL` y `LLM_API_KEY` apuntan a un proveedor comercial en lugar de a Ollama.
+1. La URL y la clave del proveedor apuntan a un proveedor comercial en lugar de a Ollama. Son por proveedor, no globales, porque el proveedor es por tarea (§3.3.4).
 2. `DATABASE_URL` apunta a un Postgres gestionado.
 3. El almacenamiento de archivos subidos pasa de disco a almacenamiento de objetos, a través de la interfaz ya existente.
 4. Se activan límites de gasto y de peticiones por IP.
@@ -515,7 +526,7 @@ Ritmo asumido: 10–20 h semanales, en paralelo a la búsqueda activa de empleo.
 | Fase | Semanas | Entregable | Material de entrevista que desbloquea |
 |---|---|---|---|
 | **F0 · Cimientos** | 1 (real: del 7 de septiembre al 1 de octubre de 2026) | Ingesta a Postgres, normalización con spaCy, limpieza, recorte de frases. `compose` completo. CLI que muestra `cloze_original`. | Ingesta y calidad de datos sobre datos reales y sucios. |
-| **F1 · Primera IA** | 2–3 | Generación de distractores (A1) con salida Pydantic, validadores D1–D4, bucle de reintento y degradación. Sigue siendo CLI. | Salidas estructuradas, validación, reintento con feedback, diseño de la degradación. |
+| **F1 · Primera IA** | 2–3 | Generación de distractores (A1) con salida Pydantic en el adaptador, validadores básico, D1 y D7 (D-027), bucle de reintento y degradación. Sigue siendo CLI. | Salidas estructuradas, validación, reintento con feedback, diseño de la degradación. |
 | **F2 · Medición** | 3–4 | Langfuse integrado. Arnés de evaluación con 100 casos y métricas deterministas. Informe versionado. | Evaluación de LLMs, coste y latencia por petición, metodología propia. **El diferenciador.** |
 | **F3 · Producto** | 4–5 | API FastAPI, interfaz Angular mínima, FSRS conectado. **La aplicación pasa a ser usable a diario.** | Sistema completo de extremo a extremo. |
 | **F4 · Segunda IA** | 5–6 | Frases nuevas de práctica (A2) y juez semántico (A3, métricas J1–J3). Acuerdo del juez con etiquetado humano. | Generación anclada a contexto, LLM como juez y sus límites. |
@@ -562,11 +573,11 @@ Ritmo asumido: 10–20 h semanales, en paralelo a la búsqueda activa de empleo.
 1. ~~¿Cuánta VRAM tiene la RTX 4070?~~ **Resuelto (§12.1)**: 8.188 MiB totales, ~6,9 GiB disponibles. Descarta modelos de más de 9B.
 2. **¿Hay cuenta o crédito de Azure disponible?** Si no, conviene decidir el destino de despliegue ahora, porque afecta al `compose` y a la configuración.
 3. **¿Qué presupuesto hay para llamadas a API** en la fase de comparativa (F6)? Determina el tamaño del conjunto de evaluación y el número de configuraciones comparables.
-4. **¿Se contempla realmente la comercialización?** Si sí, la autenticación y el RGPD suben de prioridad y conviene decidir la licencia del repositorio desde el principio.
+4. ~~¿Se contempla realmente la comercialización?~~ **Resuelto (D-025)**: por ahora no se contempla.
 
 ### Preguntas que pueden resolverse durante el desarrollo
 
-5. ¿Qué fuente de definiciones y acepciones usar para inglés, con licencia compatible? (bloqueante solo para §5.4)
+5. ~~¿Qué fuente de definiciones y acepciones usar para inglés, con licencia compatible?~~ **Resuelto para la definición correcta (D-025)**: Open English WordNet (`oewn:2025`), CC BY 4.0. Para §5.4 es la candidata, sin evaluar.
 6. ¿Los distractores generados por LLM superan a un enfoque con embeddings más filtro gramatical? Se responde con el arnés en F2.
 7. ~~¿Qué significa exactamente la columna `category` del `vocab.db`?~~ **Cerrada**: un único registro con valor distinto de 0 en dos exportaciones. No se puede inferir y no se usa; FSRS gestiona el estado de aprendizaje.
 
@@ -622,7 +633,7 @@ En 2 de 5 ejecuciones, el modelo generó distractores que eran **antónimos o ne
 
 Un usuario los descarta sin saber qué significa la palabra, solo por la forma negativa. El ejercicio deja de evaluar nada.
 
-Es un modo de fallo no previsto en la v1.0 de este documento, detectado en cinco ejecuciones. Se incorpora como **métrica D7** (§6.1) y es detectable de forma determinista mediante patrones de negación y prefijos privativos.
+Es un modo de fallo no previsto en la v1.0 de este documento, detectado en cinco ejecuciones. Se incorpora como **métrica D7** (§6.1). La parte determinista usa una lista cerrada de negaciones, sin prefijos: de los tres ejemplos se detectan dos (D-027).
 
 ### 12.5 Configuración de referencia
 
