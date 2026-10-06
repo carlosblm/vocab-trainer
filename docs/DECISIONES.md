@@ -37,6 +37,11 @@ Este archivo es el material de entrevista del proyecto. Cuando pregunten "¿por 
 | D-021 | 2026-09-24 | F0.5 | El modelo de spaCy es una dependencia del lock |
 | D-022 | 2026-09-25 | F0.5 | Variante de elección: distractores con la misma forma gramatical |
 | D-023 | 2026-09-25 | F0.5 | Un contrato de repositorio por caso de uso |
+| D-024 | 2026-10-05 | F1 | Ollama se ejecuta fuera de compose |
+| D-025 | 2026-10-05 | F1 | Fuente de la definición correcta y política conservadora de sentidos |
+| D-026 | 2026-10-06 | F1 | Un puerto por tarea de IA, no un `run` genérico |
+| D-027 | 2026-10-06 | F1 | Validadores deterministas de F1: básico, D1 y D7 |
+| D-028 | 2026-10-06 | F1 | Bucle de generación: el motivo del reintento viaja como datos |
 
 ---
 
@@ -118,6 +123,8 @@ Es un fallo silencioso. La respuesta parece correcta a nivel de HTTP y rompería
 
 **Consecuencia de diseño**: los dos endpoints no son intercambiables, así que la interfaz `LLMProvider` no es opcional. Necesita dos adaptadores reales: uno nativo de Ollama para local y uno OpenAI para producción.
 
+**Actualización (2026-10-06)**: el puerto es uno por tarea (D-026). Si existe un `LLMProvider`, será interno de los adaptadores. Siguen haciendo falta los dos adaptadores reales.
+
 ---
 
 ## D-005 · Nueva métrica D7: distractores triviales
@@ -131,6 +138,8 @@ Es un fallo silencioso. La respuesta parece correcta a nivel de HTTP y rompería
 **Por qué es determinista**: se detecta con patrones de negación y prefijos privativos (`in-`, `un-`, `lacking`, `unable`, `incapable`, `prone to`), sin necesidad de un LLM juez.
 
 **Nota**: es un modo de fallo que no estaba previsto en la propuesta v1.0 y apareció en cinco ejecuciones. Refuerza el argumento de construir el arnés antes de confiar en la generación.
+
+**Actualización (2026-10-06)**: la detección no usa prefijos ni detecta `prone to`. De los tres ejemplos de §12.4 detecta dos (D-027).
 
 ---
 
@@ -168,6 +177,8 @@ Es un fallo silencioso. La respuesta parece correcta a nivel de HTTP y rompería
 **Límite reconocido**: cambiar de modelo no será gratis. Los *prompts* no son portables entre modelos. Lo que se garantiza es que cambiar de modelo sea **modificar configuración y volver a medir**, no refactorizar.
 
 **Dependencia**: este desacoplamiento carece de valor sin el arnés de evaluación de la F2. Sin él, permitiría cambiar de modelo a ciegas, que es peor que no poder cambiarlo.
+
+**Actualización (2026-10-06)**: el `llm.run` genérico se sustituyó por un puerto por tarea (D-026). Quien llama es `application/`, y el modelo de cada tarea se resuelve en la raíz de composición. Las cuatro reglas siguen vigentes.
 
 ---
 
@@ -277,6 +288,18 @@ puede enseñar un significado falso, que es el daño que esta guarda previene.
    por contexto, comparte la dependencia de una fuente léxica de §5.4 y §11
    (pregunta 5), y se decide en F1 junto con la fuente de definiciones.
 4. La métrica D8 del arnés de F2 mide el daño residual sobre ejercicios reales.
+
+**Actualización (2026-10-05)**, sobre «Pendiente en F1»:
+
+- El punto 1 cambia: si la unidad no está en la fuente, `cloze_original`, no
+  la palabra sola. Prueba: `belly-up` es un positivo claro, su unidad no está
+  en el léxico, y volver a la palabra sola enseñaría «vientre».
+- Medido: de los 13 contextos de R1, la unidad está en el léxico en 8 y no en
+  5 (`ease out`; `belly up`, que el léxico escribe con guion; `lever up`;
+  `slink up`; `gulp down`).
+- Puntos 2 y 3: con la política de D-025 no producen ejercicios con un
+  significado falso en F1 (`come up` tiene 12 sentidos, así que va a
+  `cloze_original`). Se revisan en F4.
 
 ---
 
@@ -525,6 +548,21 @@ distractores se degradan por esto.
 detecta fallos atribuibles al lema, el número sale de ahí en lugar de una
 heurística sobre el corpus.
 
+**Actualización (2026-10-05)**, sobre la incidencia: el control de lema de
+D-025 marca 27 de los 999 contextos. Según una lectura manual hecha en la
+revisión con el asistente:
+
+- 11 son errores de spaCy que cambian el significado: `odds` (3), `waned`,
+  `waning`, `primes`, `means`, `summons`, `logistics`, `hermeneutics`, `omen`.
+- 9 son lemas alternativos reales y spaCy acierta: `bore`, `sands`, `trunks`,
+  `deeds` (2), `waters`, `sales`, `liabilities`, `best`.
+- 7 son variantes inofensivas: `lambasted` (2), `enthralled`, `swinging`,
+  `corps`, `hypochondria`, `Wounded`.
+
+Hay una familia nueva de error: sustantivos acabados en -s que no son el plural
+de otra palabra. Es una cota inferior: solo ve los casos en que el léxico
+discrepa de spaCy. En F1, esos contextos van a `cloze_original`.
+
 ---
 
 
@@ -575,6 +613,9 @@ solo módulo de spaCy.
 **Actualización (2026-09-25)**: el repositorio se separó en dos contratos, uno
 por caso de uso, así que ahora son cuatro puertos: importador, normalizador,
 `ImportRepository` y `StudyRepository` (D-023).
+
+**Actualización (2026-10-06)**: ahora son cinco puertos, con
+`DistractorGenerator` (D-026).
 
 **Revisión**: el contrato tiene una sola implementación, así que su capacidad
 real de abstraer está sin verificar. El primer examen llega con un segundo
@@ -986,6 +1027,229 @@ completar las que se anotan a medias. Destapó además 9 errores de anotación e
 vez: una regla que solo se comprueba si alguien se acuerda no está comprobada.
 
 **Coste**: dos contratos en vez de uno y `ensure_user` declarado dos veces.
+
+---
+
+## D-024 · Ollama se ejecuta fuera de compose
+
+**Fecha**: 2026-10-05 · **Fase**: F1
+
+**Decisión**: Ollama sigue nativo en WSL2 (D-001) y la aplicación lo localiza
+por variable de entorno.
+
+**Descartado**: el servicio `ollama` de §8.1, en compose y con GPU.
+
+**Por qué**:
+
+- §3.3.3 protege el artefacto desplegable, y Ollama no forma parte de él: en
+  producción se sustituye por una API (§8.2). Es un servicio de respaldo.
+- Los tests no lo necesitan, porque usan un doble.
+- La CI no tendría GPU.
+- Contenerizarlo con GPU en WSL2 sería infraestructura sin validar: §12.1
+  validó la instalación nativa.
+
+Las versiones del servidor y del modelo se registrarán con el arnés de F2.
+
+**Revisión**: en F3, cuando `api` corra en compose y tenga que alcanzar Ollama,
+que por defecto solo escucha en `127.0.0.1`. Dato para esa revisión: Docker
+funciona con Docker Desktop y su integración con WSL, no con Docker Engine
+dentro de Ubuntu.
+
+---
+
+## D-025 · Fuente de la definición correcta y política conservadora de sentidos
+
+**Fecha**: 2026-10-05 · **Fase**: F1
+
+**Decisión**:
+
+- Fuente: Open English WordNet, edición `oewn:2025`, con el paquete `wn` 1.1.1.
+- `mcq_definition` solo en los contextos cuyo (lema, categoría) tiene un único
+  sentido en el léxico y cuyo lema coincide con el que el léxico deduce de la
+  forma consultada. El resto, `cloze_original`.
+
+**Descartado**:
+
+- Una API externa en ejecución: rompe §2.4, y el arnés necesita que la
+  respuesta correcta no cambie entre ejecuciones.
+- Una definición generada por un LLM: la clave del ejercicio sería fabricada
+  (D-010).
+- Princeton WordNet: OEWN es su continuación mantenida.
+- Wiktionary: no se midió. La regla, fijada antes de medir, era medirlo solo si
+  OEWN perdía cobertura por formas no encontradas, y la pérdida venía de la
+  polisemia.
+- `oewn:2025+`: sus nombres propios sumarían sentidos a palabras comunes al
+  comparar en minúsculas.
+
+**Medido** con `scripts/measure_definition_source.py` (commit `c67f305`) sobre
+los 999 contextos utilizables de entradas `learning` de la exportación de
+septiembre de 2026. Repetida, la salida es idéntica byte a byte.
+
+| Categoría | Contextos |
+|---|---|
+| `pos_unmapped` | 40 (PROPN 24, ADP 5, AUX 4, SCONJ 4, CCONJ 1, NUM 1, PRON 1) |
+| `form_not_found` | 44 |
+| `lemma_disagrees` | 27 (7 con el lema ausente, 20 con el lema acompañado de otros) |
+| `monosemous` | 274 |
+| `polysemous` | 614 |
+
+**Por qué la política conservadora**:
+
+- Elegir mal el sentido enseña un significado falso, el daño de D-008.
+- Ninguna palabra se queda sin ejercicio, porque `cloze_original` siempre está
+  disponible.
+- Saca la desambiguación de F1, y es determinista.
+- 274 contextos bastan para construir y demostrar el bucle de A1 (§10: hasta F3
+  manda el objetivo profesional).
+
+**Control de lema**: los 27 contextos de `lemma_disagrees` van a
+`cloze_original` (ver D-015).
+
+**Medición de la primera acepción, preparada y no ejecutada**:
+
+- Script: `scripts/sample_first_sense.py` (commit `c67f305`).
+- Población: los 605 contextos `polysemous` sin los marcados por R1. Muestra de
+  50, semilla 20261005.
+- Criterio de etiquetado: «¿enseñar esta definición daría un significado falso
+  en esta frase?». Las dudas cuentan como daño.
+- Umbral del 10 %, fijado antes de etiquetar, con intervalo de Wilson al 95 %:
+  0 casos dañinos → primera acepción; de 1 a 9 → no concluyente, política
+  conservadora; 10 o más → selector con LLM justificado.
+- No se ejecutó porque exige etiquetado humano, y con etiquetas de un LLM
+  ningún resultado cambiaba la decisión de F1.
+- El orden de sentidos de `wn` se verificó contra el XML: el primer sentido de
+  `bank` es la orilla, como en Princeton 3.0.
+- Lemas en varias entradas (7 de los 605): primero la escritura exacta, después
+  `a` antes que `s`, después el orden del léxico.
+
+**Licencia**: CC BY 4.0. No se contempla la comercialización (§11, pregunta 4).
+Los datos no se commitean: se descargan.
+
+**Revisión**:
+
+- En F4, la selección de sentido, cuando §6.4 ya exija etiquetado humano.
+  - R1 detecta unidades de dos piezas, y *come up with* tiene tres.
+    Comprobado en `oewn:2025`: `come up with` no es un lema propio, y su uso
+    cae en un sentido de `come up` («bring forth», con el ejemplo «came up with
+    some recommendations»). En este caso, un selector tendría una opción
+    válida.
+  - Que un selector con LLM pueda responder «ninguno» sigue siendo un
+    requisito por principio: el léxico puede no tener el sentido del contexto.
+    Todavía no hay un caso del corpus que lo demuestre.
+- Al hacer el adaptador: `wn` pasa a dependencia principal y el léxico se
+  provisiona en la imagen (lección de D-021).
+
+---
+
+## D-026 · Un puerto por tarea de IA, no un `run` genérico
+
+**Fecha**: 2026-10-06 · **Fase**: F1
+
+**Decisión**: un `Protocol` en `ports/`,
+`DistractorGenerator.generate(DistractorRequest) -> GeneratedDistractors`. Dos
+excepciones: `GeneratorUnavailable` (degradar) y `MalformedOutput` (reintentar
+con el motivo). El modelo de cada tarea se elige en la raíz de composición.
+
+**Descartado**: el `llm.run(task, input)` genérico de D-007 y §3.3.4.
+
+**Por qué**:
+
+- Tipos exactos con mypy estricto.
+- En F1 hay una sola tarea, así que la generalidad sería abstracción sin uso.
+- El objetivo de D-007 se mantiene: ningún modelo en el código y configuración
+  por tarea.
+
+**Detalles**:
+
+- `Protocol` y no `Callable`, porque un generador tiene estado que inyectar
+  (criterio de D-016).
+- Tipos de la biblioteca estándar; Pydantic irá en el adaptador.
+- `tuple[str, str, str]`, para que mypy compruebe que son tres.
+- `model` y `prompt_version` vuelven en el resultado.
+- Forma (exactamente tres cadenas) frente a contenido (vacías o repetidas): lo
+  segundo es de los validadores.
+
+**Verificado**: al renombrar `generate` en una copia del doble, mypy falla en la
+asignación tipada.
+
+**Revisión**: en F4, con las otras dos tareas.
+
+---
+
+## D-027 · Validadores deterministas de F1: básico, D1 y D7
+
+**Fecha**: 2026-10-06 · **Fase**: F1
+
+**Decisión**: funciones puras del dominio que devuelven códigos e índices, no
+texto.
+
+- Básico: `EMPTY` y `DUPLICATE`.
+- D1 (`OVERLAPS_CORRECT`): la definición correcta está contenida en un
+  distractor, o al revés. Se compara por secuencias de palabras, no por
+  subcadenas (la trampa de D-019).
+- D7 (`NEGATION`): lista cerrada de marcadores, indexada por idioma y sin
+  prefijos. Solo marca si la definición correcta no niega.
+- Un idioma sin lista provoca `ValueError`, al revés que D-013: sin
+  marcadores, D7 daría por bueno cualquier distractor negativo y nadie lo
+  notaría.
+- La tokenización no depende del alfabeto inglés y normaliza a NFC.
+
+**Descartado**:
+
+- D2: necesita spaCy, que no puede entrar en el dominio; exigiría otro puerto,
+  y el arnés de F2 lo mide igualmente.
+- D3: la v1 es solo inglés, y el fallo de idioma solo se vio con Qwen3 (D-002).
+- D4: es de frases generadas (A2, F4).
+- D5 y D6: no son de generación.
+- Los prefijos de D-005: marcarían `interesting`, `under` o `uniform`.
+
+**Por qué códigos**: el informe se guarda y se cuenta, y el texto que lee el
+modelo depende del idioma del prompt.
+
+**Límites**:
+
+- D7 no ve antónimos léxicos: «Prone to breaking down under pressure» (§12.4)
+  pasa. Lo cubre J2.
+- D1 no ve paráfrasis. Lo cubre J1.
+
+**Revisión**: en F2 (arnés) y en F4 (juez).
+
+---
+
+## D-028 · Bucle de generación: el motivo del reintento viaja como datos
+
+**Fecha**: 2026-10-06 · **Fase**: F1
+
+**Decisión**: un intento inicial y, como máximo, dos reintentos. Así se leen
+juntos «máximo 2» y «si falla 2 veces» de §7.3.
+
+- El reintento lleva `RejectedDistractors` (los distractores anteriores y sus
+  violaciones) o `MalformedAnswer` (el motivo), siempre solo del último fallo.
+- El texto que lee el modelo lo escribe el adaptador con las plantillas del
+  prompt.
+
+**Descartado**: traducir los códigos a frases en la aplicación.
+
+**Por qué**:
+
+- Cómo se explica el fallo cambia lo que responde el modelo. Si esa frase vive
+  en Python, cambiarla no cambia `prompt_version` y el arnés no puede atribuir
+  el resultado (D-007, regla 3).
+- Una frase en inglés en la aplicación sería una rama de idioma en el código
+  (§3.3.1).
+- Los distractores anteriores viajan porque cada llamada al modelo es
+  independiente.
+
+**Proveedor no disponible**: se degrada al momento, sin reintentar, y se
+conserva el motivo para avisar. Sin aviso, un nombre de modelo mal escrito
+degradaría en silencio. Los reintentos de errores de transporte pasajeros,
+incluida la carga del modelo en Ollama, son del adaptador.
+
+El `ValueError` del validador no se captura. La función no imprime nada:
+devuelve la causa.
+
+**Historial**: registra cada intento: aceptado; rechazado, con los distractores
+y las violaciones; mal formado; o no disponible.
 
 ---
 
