@@ -15,6 +15,8 @@ dependencies = [
     "spacy>=3.8,<3.9",
     "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "typer",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.5",
 ]
 
 [project.scripts]
@@ -104,4 +106,5 @@ forbidden_modules = [
     "pydantic_settings",
     "alembic",
     "psycopg",
+    "httpx",
 ]

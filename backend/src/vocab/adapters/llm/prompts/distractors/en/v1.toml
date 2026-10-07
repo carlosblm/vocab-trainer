@@ -1,0 +1,88 @@
+# Prompt de distractores (A1) · inglés · versión 1.
+#
+# Todo lo que lee el modelo está en este archivo: cambiar una frase es publicar
+# otra versión, para que el arnés de F2 pueda atribuir el resultado (D-007,
+# regla 3; D-028). En inglés, porque Qwen3.5 responde en el idioma del prompt
+# (§12.5).
+#
+# Las plantillas siguen la sintaxis de `string.Template`: `$term` se sustituye y
+# `$$` es un dólar literal. Cada una admite solo los marcadores que se indican, y
+# uno desconocido hace fallar la construcción del adaptador.
+
+# Sin marcadores.
+system = """
+You write the wrong options of a multiple-choice vocabulary quiz.
+
+The learner reads a sentence, looks at one word in it and chooses its meaning \
+from four definitions. One of them is correct. You write the other three: \
+definitions that are false for the word as it is used in the sentence, but \
+plausible enough that a learner who does not know the word could choose them.
+
+Reply only with a JSON object of the form \
+{"distractors": ["...", "...", "..."]}: exactly three strings and nothing else.
+"""
+
+# $term, $lemma, $pos, $sentence, $definition.
+user = """
+Sentence: $sentence
+Word: $term (dictionary form: $lemma; part of speech: $pos)
+Correct definition: $definition
+
+Write three wrong definitions of "$term" as it is used in this sentence. Each \
+one must:
+
+- define a word of the same part of speech ($pos) with the same grammatical \
+shape as the correct definition, so that it fits the place of the word in the \
+sentence;
+- look like the correct definition: about the same number of words, the same \
+capitalization and the same final punctuation, or none if it has none;
+- mean something clearly different from the correct definition, and not be a \
+rewording of it;
+- not be the opposite of the correct definition and, unless the correct \
+definition itself has a negation, not use one: no "not", "no", "never", \
+"without", "lacking" or "unable to". A learner would rule out such an option \
+without knowing the word;
+- not contain the correct definition, and not be contained in it;
+- be different from the other two.
+"""
+
+[retry_rejected]
+# Los distractores anteriores, uno por línea con `kept` o `rejected`. Además de
+# $items, admite los marcadores de `user`.
+message = """
+Your previous three definitions were:
+
+$items
+
+Write a new definition in place of each one marked "replace", avoiding the \
+problem stated. Keep the ones marked "keep" exactly as they are, in the same \
+position. All the rules above still apply.
+"""
+# $number (desde 1) y $distractor.
+kept = '$number. "$distractor" (keep)'
+# $number, $distractor y $problems: las frases de `violations` del distractor.
+rejected = '$number. "$distractor" (replace: $problems)'
+
+[retry_malformed]
+# $reason es una de las frases de `malformed`. Además, los marcadores de `user`.
+message = """
+Your previous answer could not be used: $reason. Reply again with only the \
+JSON object and exactly three definitions.
+"""
+
+# Una frase por cada `ViolationCode`, sin marcadores. Falta una y el adaptador no
+# se construye.
+[violations]
+empty = "it is empty"
+duplicate = "it repeats an earlier definition"
+overlaps_correct = "it contains the correct definition, or is contained in it"
+negation = "it negates something, so a learner could rule it out without knowing the word"
+
+# Por qué no se pudo leer la respuesta. Son el `reason` de `MalformedOutput`, y
+# vuelven al modelo en el reintento dentro de `retry_malformed`.
+[malformed]
+invalid_json = "it was not valid JSON"
+# $count: cuántas definiciones trajo.
+wrong_count = "it had $count definitions instead of three"
+wrong_shape = 'it did not have the form {"distractors": ["...", "...", "..."]}'
+truncated = "it was cut off before the end because it was too long"
