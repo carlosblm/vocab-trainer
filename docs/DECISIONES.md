@@ -42,6 +42,12 @@ Este archivo es el material de entrevista del proyecto. Cuando pregunten "¿por 
 | D-026 | 2026-10-06 | F1 | Un puerto por tarea de IA, no un `run` genérico |
 | D-027 | 2026-10-06 | F1 | Validadores deterministas de F1: básico, D1 y D7 |
 | D-028 | 2026-10-06 | F1 | Bucle de generación: el motivo del reintento viaja como datos |
+| D-029 | 2026-10-07 | F1 | Plantillas del prompt: en inglés, en TOML dentro del paquete |
+| D-030 | 2026-10-07 | F1 | Adaptador de Ollama: configuración por tarea y transporte |
+| D-031 | 2026-10-09 | F1 | Puerto del léxico y adaptador de OEWN |
+| D-032 | 2026-10-09 | F1 | Todo contexto que marca R1 va a `cloze_original` en F1 |
+| D-033 | 2026-10-09 | F1 | La definición se busca al importar y se guarda |
+| D-034 | 2026-10-09 | F1 | La desambiguación de sentidos pasa a F2, como comparación medida |
 
 ---
 
@@ -154,6 +160,9 @@ Es un fallo silencioso. La respuesta parece correcta a nivel de HTTP y rompería
 **Velocidad medida**: 65 tokens/s con un 4B, con las 37 capas en GPU.
 
 **Alternativa si hiciera falta más capacidad**: comparar contra una API externa en la F6. Para el volumen del proyecto (unos 5.000 ejercicios en total) el coste de API es de pocos euros, así que no hay razón económica para forzar el hardware.
+
+**Actualización (2026-10-07)**: las 37 capas eran de Qwen3-4B. Con
+`qwen3.5:4b`, el registro de Ollama dice 34/34 (D-030).
 
 ---
 
@@ -300,6 +309,10 @@ puede enseñar un significado falso, que es el daño que esta guarda previene.
 - Puntos 2 y 3: con la política de D-025 no producen ejercicios con un
   significado falso en F1 (`come up` tiene 12 sentidos, así que va a
   `cloze_original`). Se revisan en F4.
+
+**Actualización (2026-10-09)**: todo contexto que marca R1 va a
+`cloze_original` en F1 (D-032). La frase de que la definición de la unidad
+«sigue siendo correcta» queda refutada por `chewed up`.
 
 ---
 
@@ -616,6 +629,8 @@ por caso de uso, así que ahora son cuatro puertos: importador, normalizador,
 
 **Actualización (2026-10-06)**: ahora son cinco puertos, con
 `DistractorGenerator` (D-026).
+
+**Actualización (2026-10-09)**: ahora son seis puertos, con `Lexicon` (D-031).
 
 **Revisión**: el contrato tiene una sola implementación, así que su capacidad
 real de abstraer está sin verificar. El primer examen llega con un segundo
@@ -1139,6 +1154,18 @@ Los datos no se commitean: se descargan.
 - Al hacer el adaptador: `wn` pasa a dependencia principal y el léxico se
   provisiona en la imagen (lección de D-021).
 
+**Actualización (2026-10-09)**:
+
+- `chewed up` es el caso del corpus que faltaba (D-032).
+- La seguridad de la política conservadora era una suposición: un único
+  sentido en el léxico no garantiza que sea el sentido del contexto.
+- El riesgo entre los 270 contextos `eligible` está sin medir, y se medirá
+  con el etiquetado de F2 (D-034).
+- Con R1 son 270, no 274.
+- La selección de sentido pasa de F4 a F2 (D-034).
+- Del punto «Al hacer el adaptador», `wn` ya es dependencia principal
+  (D-031); falta el léxico en la imagen.
+
 ---
 
 ## D-026 · Un puerto por tarea de IA, no un `run` genérico
@@ -1214,6 +1241,17 @@ modelo depende del idioma del prompt.
 
 **Revisión**: en F2 (arnés) y en F4 (juez).
 
+**Actualización (2026-10-07)**: evidencia con el modelo real, sin medición
+formal:
+
+- En 2 de los 3 ejemplos de integración, un distractor era un antónimo
+  léxico de la correcta: «capable of being broken easily» para `resilient`,
+  y «want to avoid something» para `craved`.
+- En otra ejecución salió una paráfrasis de la correcta para `craved`
+  («feel a strong urge for»).
+- D7 marcó las negaciones de §12.4, y D1, la definición correcta copiada
+  como distractor.
+
 ---
 
 ## D-028 · Bucle de generación: el motivo del reintento viaja como datos
@@ -1250,6 +1288,295 @@ devuelve la causa.
 
 **Historial**: registra cada intento: aceptado; rechazado, con los distractores
 y las violaciones; mal formado; o no disponible.
+
+**Actualización (2026-10-07)**: la carga del modelo ya no la cubre un
+reintento, sino el tiempo de espera. Un tiempo agotado no se reintenta; solo
+los 5xx (D-030).
+
+---
+
+## D-029 · Plantillas del prompt: en inglés, en TOML dentro del paquete
+
+**Fecha**: 2026-10-07 · **Fase**: F1
+
+**Decisión**:
+
+- Un archivo TOML por (tarea, idioma, versión), dentro del paquete, leído con
+  `importlib.resources` y `tomllib`: `prompts/distractors/en/v1.toml`.
+- Contiene el mensaje de sistema, el de usuario, el reintento por rechazo
+  (`[retry_rejected]`, con las plantillas de línea `kept` y `rejected`), el
+  reintento por salida mal formada (`[retry_malformed]`), una frase por
+  `ViolationCode` (`[violations]`) y una por cada forma de salida mal formada
+  (`[malformed]`).
+- Plantillas con `string.Template`, porque el prompt contiene JSON con llaves.
+- Se valida al cargar: una clave desconocida o un `ViolationCode` sin frase
+  fallan al construir el adaptador, no en la primera llamada.
+- El reintento va como un segundo mensaje `user`.
+
+**El prompt está en inglés.** Se aparta de la configuración de referencia de
+§12.5, con el prompt en español y «Responde únicamente en inglés». Qwen3.5
+responde en el idioma del prompt, así que escribirlo en inglés elimina ese modo
+de fallo en vez de parchearlo. Encaja con §3.3.1: el prompt de `en` se escribe
+en inglés, y el de `es`, en F7, en español.
+
+**Idioma de los motivos**: los de `MalformedOutput` están en inglés y en el
+TOML, porque vuelven al modelo (D-028). Los de `GeneratorUnavailable` están en
+español, porque los lee el usuario.
+
+**Descartado**:
+
+- El prompt en el código: cambiarlo no cambiaría `prompt_version`, y el arnés
+  no podría atribuir los resultados (D-007, regla 3).
+- El prompt en una carpeta fuera del paquete: habría que copiarla a la imagen
+  y configurar su ruta (lección de D-021).
+
+**Observado con el modelo real, sin medición formal**: en un reintento, el
+modelo conservó el distractor que se le pidió sustituir y escribió la
+definición correcta como distractor. D1 lo marcó, y se aceptó al tercer
+intento.
+
+**Revisión**: en F2, como primer experimento del arnés, `v1` frente a una `v2`
+con ejemplos (*few-shot*). Riesgos a medir:
+
+- que el modelo copie los ejemplos;
+- que los ejemplos negativos empujen hacia ese patrón;
+- la fuga de datos si los ejemplos salen del conjunto de evaluación.
+
+---
+
+## D-030 · Adaptador de Ollama: configuración por tarea y transporte
+
+**Fecha**: 2026-10-07 · **Fase**: F1
+
+**Configuración**, con pydantic-settings y el delimitador anidado `__`:
+
+- Por tarea: `LLM_TASK__DISTRACTORS__PROVIDER`, `__MODEL` y
+  `__PROMPT_VERSION`. Opcionales: `__THINK` y `__TEMPERATURE`; si no se
+  definen, no se envían.
+- Por proveedor: `OLLAMA_BASE_URL` y `OLLAMA_TIMEOUT_SECONDS`.
+- Los nombres van en inglés por la regla de `CLAUDE.md`; el ejemplo de §3.3.4
+  los tenía en español.
+- La sección es opcional, para que `import` y `study` arranquen sin ella.
+- Un `PROVIDER` distinto de `ollama` falla al cargar la configuración: en F1
+  es el único adaptador.
+- El modelo solo aparece en `.env` y `.env.example` (D-007).
+
+**Petición**:
+
+- `POST /api/chat`, con `stream: false`, `think` según la tarea y `format` con
+  el esquema JSON del modelo Pydantic de salida (D-004).
+- Se valida `message.content` con Pydantic: exactamente tres cadenas, sin
+  campos extra. JSON inválido, otro número de distractores o una respuesta
+  cortada por longitud (`done_reason`) → `MalformedOutput`.
+- Un 2xx sin `message.content` → `GeneratorUnavailable`: quien responde no es
+  `/api/chat`.
+
+**Transporte**:
+
+- Un único reintento, tras 1 s, solo para respuestas 5xx.
+- Conexión rechazada, 4xx o tiempo agotado → `GeneratorUnavailable` al
+  momento, con la URL y el modelo en el motivo.
+- La política es de este adaptador y supone un Ollama local. Un adaptador de
+  API decidirá la suya con sus propias mediciones (F6).
+
+**Tiempo de espera**: 150 s por defecto. Medido con GPU (34/34 capas), con el
+prompt `v1` (358 tokens de entrada), `think: false` y el ejemplo `craved`:
+
+| Llamada | `load_duration` | `total_duration` |
+|---|---|---|
+| Frío 1 | 41,902 s | 71,201 s |
+| Frío 2 | 5,643 s | 6,579 s |
+| Frío 3 | 5,398 s | 6,170 s |
+| Caliente 1 | 0,002 s | 0,583 s |
+| Caliente 2 | 0,001 s | 0,518 s |
+| Caliente 3 | 0,002 s | 0,524 s |
+
+Frío 1 fue la primera carga tras arrancar Ollama. Es una sola muestra, y su
+causa no se conoce. Con 30 s, esa primera petición degradaría siempre.
+
+**Dependencias**: `httpx` y `pydantic` pasan a ser directas; `httpx` queda
+prohibido en el dominio en import-linter.
+
+**Descartado**: reintentar un tiempo agotado. Con un tiempo de espera que ya
+cubre la carga del modelo, solo duplica la espera antes de degradar.
+
+**Revisión**: en la pieza de la CLI.
+
+- Precalentamiento al empezar la sesión: si el modelo no está cargado,
+  cargarlo con un tiempo de espera largo y avisar al usuario.
+- Durante la sesión, un tiempo de espera corto para generar.
+- Dos tiempos de espera configurables.
+
+---
+
+## D-031 · Puerto del léxico y adaptador de OEWN
+
+**Fecha**: 2026-10-09 · **Fase**: F1
+
+**Decisión**:
+
+- Un `Protocol` `Lexicon` en `ports/`, porque el adaptador tiene estado
+  (criterio de D-016): `facts(list[LexiconQuery]) -> dict[str, LexiconFacts]`,
+  con `LexiconQuery(external_id, term, lemma, pos, lang)`.
+- Los hechos (`Sense` y `LexiconFacts`) son tipos del dominio.
+- La política de D-025 es una función pura del dominio:
+  `decide_definition(lemma, particle, facts) -> DefinitionDecision`.
+- `DefinitionStatus` tiene valores escritos a mano: `eligible`,
+  `pos_unmapped`, `form_not_found`, `lemma_disagrees`, `lexical_unit` y
+  `polysemous`.
+- `DefinitionDecision` exige que la definición y el sentido vayan juntos, y
+  solo con `eligible`.
+
+**El adaptador solo devuelve hechos**:
+
+- Los lemas a los que Morphy lleva la forma consultada.
+- Los sentidos del lema, sin lematizar y con `search_all_forms=False`.
+- `ADJ` cubre `a` y `s`, y todo se compara en minúsculas.
+- `LEXICON = "oewn:2025"`, como constante: cambiarlo exige volver a medir.
+- Solo inglés: cualquier otro idioma da `ValueError` antes de consultar nada
+  (§3.3.1).
+
+**Descartado**: que el adaptador aplique la política de D-025. La regla solo
+se podría probar con el diccionario delante, y cambiar de diccionario
+obligaría a reescribirla. Por eso el adaptador solo devuelve hechos y la
+política es una función pura del dominio.
+
+**Dependencias y arranque**:
+
+- `wn` pasa a dependencia principal (`>=1.1.1,<1.2`; la versión medida).
+- Un override de mypy `implicit_reexport`, solo para el módulo `wn`, permite
+  usar `wn.config` sin tocar el módulo privado `wn._config`.
+- `wn` queda prohibido en el dominio.
+- Si el léxico no está descargado en `WN_DATA_DIR`, el adaptador falla al
+  construirse con el comando de descarga; `wn` crearía una base vacía.
+
+**Verificado**: sin partícula, el test sobre la exportación de septiembre
+reproduce exactamente la tabla de D-025.
+
+**Pendiente**: el léxico en la imagen Docker (lección de D-021), con la pieza
+que guarda la definición al importar.
+
+---
+
+## D-032 · Todo contexto que marca R1 va a `cloze_original` en F1
+
+**Fecha**: 2026-10-09 · **Fase**: F1
+
+**Decisión**: si R1 marca la palabra, el estado es `lexical_unit` y el
+ejercicio es `cloze_original`, se encuentre o no la unidad en el léxico. El
+adaptador deja de buscar la unidad.
+
+**Descartado**: buscar la definición de la unidad (D-008, «Pendiente en F1»,
+punto 1).
+
+**Por qué**: `chewed up`. En «…have our money chewed up and spit out», la
+unidad `chew up` tiene un único sentido en `oewn:2025`, «censure severely or
+angrily», que en esa frase es falso. De las 3 unidades con un solo sentido, 1
+lo es; `sponged up` y `stamp out` encajan. Un falso positivo de R1 no es
+barato, al contrario de lo que suponía D-008.
+
+**Resultado** sobre los 999 contextos utilizables de entradas `learning` de la
+exportación de septiembre de 2026:
+
+| Estado | Contextos |
+|---|---|
+| `pos_unmapped` | 40 |
+| `form_not_found` | 44 |
+| `lemma_disagrees` | 27 |
+| `lexical_unit` | 13 |
+| `eligible` | 270 |
+| `polysemous` | 605 |
+
+Sin partícula, los 13 contextos de R1 eran 4 `eligible` y 9 `polysemous`.
+
+**Revisión**: la búsqueda de la unidad vuelve con la selección de sentido
+(D-034, F2).
+
+---
+
+## D-033 · La definición se busca al importar y se guarda
+
+**Fecha**: 2026-10-09 · **Fase**: F1
+
+**Decisión**: al importar, cada contexto nuevo consulta el léxico y guarda en
+Postgres su estado, y la definición y el sentido si es `eligible`. `study` lee
+de la base, y no carga ni spaCy ni el léxico.
+
+**Descartado**: buscar la definición al estudiar.
+
+**Por qué**:
+
+- Es el mismo patrón que `pos`, `morph` y `term` (D-020, D-022).
+- La respuesta correcta de cada ejercicio queda como un dato fijo y auditable,
+  que es lo que exige el arnés (D-025).
+- `study`, y la API de F3, siguen siendo ligeros.
+- La plantilla de degradación se reduce a una consulta a la base.
+
+**El léxico** ocupa unos 104 MB en `WN_DATA_DIR`, la base SQLite y la
+descarga. Cada búsqueda es una consulta; no se carga entero en memoria. Solo
+se usa al importar, y solo para los contextos nuevos (D-012).
+
+**Coste**:
+
+- Una migración y reimportar, sin progreso que perder hasta F3.
+- Si cambian el léxico o la política (D-034), hay que recalcular los
+  contextos existentes, porque la reimportación no los toca.
+
+**Estado**: decidida, sin implementar.
+
+---
+
+## D-034 · La desambiguación de sentidos pasa a F2, como comparación medida
+
+**Fecha**: 2026-10-09 · **Fase**: F1
+
+**Decisión**: en F2 se comparan métodos para elegir el sentido del contexto:
+
+- la primera acepción, como referencia;
+- Lesk;
+- embeddings;
+- modelos de desambiguación entrenados sobre WordNet;
+- un selector con LLM, Qwen3.5 local o una API;
+- Jev, el clasificador alojado de TypeSafe, cuyas probabilidades calibradas
+  permiten abstenerse con un umbral.
+
+Cada método es un adaptador del mismo puerto.
+
+**La comparación incluye resolver el lema**: cuando el léxico da varios lemas
+(20 de los 27 `lemma_disagrees`), el selector recibe los sentidos de todos los
+candidatos; cuando da uno solo (los otros 7), se usa ese.
+
+**Requisito**: el selector puede responder «ninguno». Con «ninguno», o con
+poca confianza, `cloze_original`.
+
+**Etiquetado de referencia**:
+
+- Dos modelos de otra familia que los candidatos etiquetan por separado, en un
+  chat y una sola vez: el sentido correcto o «ninguno».
+- Se registra qué modelo, cuándo y con qué instrucción.
+- Las coincidencias se aceptan; las discrepancias las decide Carlos.
+- Revisión manual de unas 20 coincidencias al azar.
+- Los resultados se dan sobre la referencia completa y sobre la parte
+  revisada a mano.
+
+**Descartado**:
+
+- Mantener la política conservadora hasta F4 (D-025): solo 270 de 999
+  contextos tienen opción múltiple, y 605 de los que no la tienen son
+  polisémicos.
+- Un único etiquetador sin validar: sería circular y de precisión desconocida.
+- Etiquetarlo todo a mano.
+
+**Por qué**: es el cuello de botella de cobertura de `mcq_definition`, y
+comparar métodos con una referencia validada es material central del perfil.
+
+**Mientras tanto**, F1 cierra con la política conservadora: 270 de 999
+contextos.
+
+**A investigar en F2**: el precio de Jev, y la licencia y la calidad de
+Nimble, Laya y los modelos de desambiguación.
+
+**Revisión**: al cerrar F2, con los números.
 
 ---
 
