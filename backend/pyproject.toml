@@ -17,6 +17,9 @@ dependencies = [
     "typer",
     "httpx>=0.28.1",
     "pydantic>=2.13.5",
+    # Acotado como spaCy (D-021): D-025 se midió con wn 1.1.1, y otra versión
+    # podría cambiar Morphy o la búsqueda de formas sin avisar.
+    "wn>=1.1.1,<1.2",
 ]
 
 [project.scripts]
@@ -29,7 +32,6 @@ dev = [
     "mypy",
     "testcontainers>=4.15.0",
     "import-linter>=2.15",
-    "wn>=1.1.1",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -76,6 +78,14 @@ module = ["tests.*", "scripts.*"]
 disallow_untyped_defs = false
 check_untyped_defs = true
 
+# `wn.config` es la API pública con la que se elige el directorio de datos, pero
+# `wn` lo importa en su `__init__` sin ponerlo en `__all__`, y mypy estricto no
+# lo da por exportado. Esto lo admite solo para el paquete `wn`, sin tocar el
+# módulo privado `wn._config`.
+[[tool.mypy.overrides]]
+module = ["wn"]
+implicit_reexport = true
+
 [tool.importlinter]
 root_package = "vocab"
 # Necesario para que el contrato `forbidden` vea paquetes que no son `vocab`.
@@ -107,4 +117,5 @@ forbidden_modules = [
     "alembic",
     "psycopg",
     "httpx",
+    "wn",
 ]

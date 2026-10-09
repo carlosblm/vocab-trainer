@@ -1,6 +1,7 @@
 """Carga de la configuración de la aplicación desde variables de entorno."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -54,6 +55,15 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     llm_task: LLMTasks = Field(default_factory=LLMTasks)
+
+    wn_data_dir: Path | None = None
+    """Directorio de datos de `wn` con el léxico de D-025. Opcional, como la
+    tarea de distractores: `import` y `study` no lo usan.
+
+    `wn` lee la misma variable al importarse, pero sin expandir `~` y solo del
+    entorno del proceso, no del `.env`. Por eso el adaptador lo fija con
+    `wn.config` a partir de este valor.
+    """
 
     # Por proveedor, no por tarea: dos tareas con el mismo proveedor comparten
     # servidor (§8.2).

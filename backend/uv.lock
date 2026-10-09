@@ -1661,6 +1661,7 @@ dependencies = [
     { name = "spacy" },
     { name = "sqlalchemy" },
     { name = "typer" },
+    { name = "wn" },
 ]
 
 [package.dev-dependencies]
@@ -1670,7 +1671,6 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
     { name = "testcontainers" },
-    { name = "wn" },
 ]
 
 [package.metadata]
@@ -1684,6 +1684,7 @@ requires-dist = [
     { name = "spacy", specifier = ">=3.8,<3.9" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "typer" },
+    { name = "wn", specifier = ">=1.1.1,<1.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -1693,7 +1694,6 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
     { name = "testcontainers", specifier = ">=4.15.0" },
-    { name = "wn", specifier = ">=1.1.1" },
 ]
 
 [[package]]
