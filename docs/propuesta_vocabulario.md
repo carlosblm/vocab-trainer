@@ -1,7 +1,7 @@
 # Propuesta técnica — Aplicación de estudio de vocabulario
 
 **Documento de contexto del proyecto**
-Autor: Carlos Blázquez Martín · Versión 1.8 · Octubre 2026
+Autor: Carlos Blázquez Martín · Versión 1.9 · Octubre 2026
 
 ---
 
@@ -73,14 +73,14 @@ La aplicación es útil sin conexión a ningún servicio externo: el ejercicio d
 
 **Esto no es una funcionalidad que falta: es la aplicación enseñando algo falso.** Por eso la guarda es obligatoria y no opcional.
 
-**La guarda (obligatoria; implementada en F0.6, se conecta en F1).** Antes de generar cualquier ejercicio, determinar si la palabra consultada forma parte de una unidad léxica mayor en su contexto. Si es así, el ejercicio se construye sobre la unidad completa.
+**La guarda (obligatoria; implementada en F0.6, se conecta en F1).** Antes de generar cualquier ejercicio, determinar si la palabra consultada forma parte de una unidad léxica mayor en su contexto. Si es así, el ejercicio se construye sobre la unidad completa. En F1, todo contexto que marca R1 va a `cloze_original` (D-032); construir el ejercicio sobre la unidad completa vuelve con la selección de sentido, en F2 (D-034).
 
 **El tipo de ejercicio (abierto, F7).** `phrasal_verb`: hueco que cubre verbo y partícula, o elección de la partícula correcta entre varias. Depende de disponer de una fuente léxica fiable, igual que §5.4.
 
 **El problema difícil es la detección, no la generación.** Una regla ingenua —la palabra va seguida de un token que el etiquetador de spaCy marca como partícula (`RP`) o como preposición o conjunción subordinante (`IN`)— marca **206 de las 1.024** consultas en inglés de septiembre de 2026, frente a 13 del análisis de dependencias (D-008): `sojourn in`, `gravestones in`, `stake in` o `tycoons in` son sustantivo más preposición, no verbos frasales. Enfoque, en este orden:
 
 1. **Análisis de dependencias con spaCy (implementado en F0.6).** En inglés la partícula de un verbo frasal lleva una relación de dependencia distinta de la de una preposición ordinaria. Es determinista y separa `eased out` de `stake in`. *Verificado en F0.6, sin medición formal: separa la partícula de la preposición cuando la diferencia es sintáctica, pero no ve la opacidad semántica (D-008).*
-2. **La opacidad de los verbos con preposición se decidió en F1, de forma conservadora (D-025).** El análisis de dependencias no la ve: *came across a letter* y *came across a bridge* reciben el mismo análisis. Una lista de phrasal verbs, que era la capa prevista aquí, ya no lo es: marcaría igual los dos casos (D-008, «Pendiente en F1»). En F1, `mcq_definition` solo se genera cuando el lema tiene un único sentido en la fuente de definiciones, así que un verbo con varias lecturas va a `cloze_original`. Se revisa en F4.
+2. **La opacidad de los verbos con preposición se decidió en F1, de forma conservadora (D-025).** El análisis de dependencias no la ve: *came across a letter* y *came across a bridge* reciben el mismo análisis. Una lista de phrasal verbs, que era la capa prevista aquí, ya no lo es: marcaría igual los dos casos (D-008, «Pendiente en F1»). En F1, `mcq_definition` solo se genera cuando el lema tiene un único sentido en la fuente de definiciones, así que un verbo con varias lecturas va a `cloze_original`. Se revisa en F2, con la selección de sentido (D-034).
 3. **LLM solo como último recurso.** Preguntar a un modelo si algo es un phrasal verb tiende a producir falsos positivos, así que no puede ser la primera línea.
 
 **Relación con §5.4.** Un phrasal verb es un caso particular del problema de desambiguación de acepción: la unidad de significado no coincide con la palabra almacenada. Ambos comparten la misma dependencia de una fuente léxica.
@@ -176,20 +176,20 @@ Es previsible que haga falta. Los tres usos de IA (§5.2) tienen requisitos opue
 
 Forzar el mismo modelo en las tres es una decisión que no se querrá mantener.
 
-**Implementación.** Una tabla de configuración indexada por tarea, resuelta por variables de entorno:
+**Implementación.** Una tabla de configuración indexada por tarea, resuelta por variables de entorno (D-030):
 
 ```
 # Modelos orientativos (pueden cambiarse en el futuro para utilizar el más
 # adecuado para cada tarea)
-LLM_TASK__DISTRACTORES__PROVIDER=ollama
-LLM_TASK__DISTRACTORES__MODEL=qwen3.5:4b
-LLM_TASK__DISTRACTORES__THINK=false
-LLM_TASK__DISTRACTORES__PROMPT_VERSION=v3
+LLM_TASK__DISTRACTORS__PROVIDER=ollama
+LLM_TASK__DISTRACTORS__MODEL=qwen3.5:4b
+LLM_TASK__DISTRACTORS__THINK=false
+LLM_TASK__DISTRACTORS__PROMPT_VERSION=v1
 
-LLM_TASK__JUEZ__PROVIDER=openai
-LLM_TASK__JUEZ__MODEL=<modelo comercial>
-LLM_TASK__JUEZ__THINK=true
-LLM_TASK__JUEZ__PROMPT_VERSION=v2
+LLM_TASK__JUDGE__PROVIDER=openai
+LLM_TASK__JUDGE__MODEL=<modelo comercial>
+LLM_TASK__JUDGE__THINK=true
+LLM_TASK__JUDGE__PROMPT_VERSION=v2
 ```
 
 Cada tarea tiene su propio puerto (en F1, `DistractorGenerator`), y lo llama la capa `application/`. El modelo de cada tarea se resuelve en la raíz de composición, que construye el adaptador con la configuración de su tarea. Quien llama no conoce el modelo, el proveedor ni el endpoint (D-026).
@@ -327,7 +327,7 @@ Estimación: entre el 60 % y el 70 % del sistema no ejecuta ninguna llamada a un
 
 **Dependencia importante.** Para generar buenos distractores hay que saber en qué acepción se usa la palabra en esa frase. En el corpus real aparece «Salvo los internados en un manicomio», donde "salvo" es preposición y no el verbo salvar. Los distractores de una acepción no sirven para la otra. Por tanto, **una desambiguación mínima de acepción es un requisito implícito de A1**, aunque no figure como funcionalidad visible.
 
-**En F1 se resuelve sin desambiguar**: `mcq_definition` solo se genera en los contextos cuyo lema tiene un único sentido en su categoría (D-025). La selección de sentido va a F4.
+**En F1 se resuelve sin desambiguar**: `mcq_definition` solo se genera en los contextos cuyo lema tiene un único sentido en su categoría (D-025). La selección de sentido va a F2, como comparación medida de varios métodos (D-034).
 
 #### A2 — Generación de frases nuevas de práctica
 
@@ -434,7 +434,7 @@ Cada elección lleva su justificación. La columna "Demanda" refleja el número 
 | Frontend | **Angular + TypeScript** | 7/29 (TS) | El autor ya lo domina: coste de aprendizaje cero. La interfaz no es donde está el valor del proyecto. |
 | Modelo local | **Qwen3.5-4B (Q4) sobre Ollama** | — | Validado en §12. Frente a Qwen3-4B: la mitad de tokens, respeta el idioma del prompt y acepta `think:false` de verdad. |
 | Endpoint local | **`/api/chat` nativo con `format`** | — | **No** el endpoint `/v1/` compatible con OpenAI: no propaga `think` y, con Qwen3, `think:false` mueve el razonamiento al campo `content` en lugar de suprimirlo (§12.3). |
-| Cliente de LLM | Un puerto por tarea + configuración por tarea en la raíz de composición | — | Adaptador nativo de Ollama y adaptador OpenAI detrás de cada puerto, porque los dos endpoints no son intercambiables (D-004). La configuración se resuelve por tarea (§3.3.4), no globalmente (D-026). |
+| Cliente de LLM | Un puerto por tarea + configuración por tarea en la raíz de composición; **httpx** contra `/api/chat` (D-030) | — | Adaptador nativo de Ollama y adaptador OpenAI detrás de cada puerto, porque los dos endpoints no son intercambiables (D-004). La configuración se resuelve por tarea (§3.3.4), no globalmente (D-026). |
 | NLP | **spaCy** | 6/29 (NLP) | Lematización, categoría gramatical y segmentación de frases. Ya figura en el CV del autor. |
 | Fuente léxica | **Open English WordNet** (`oewn:2025`) vía `wn` | — | CC BY 4.0, local (D-025). |
 | Repetición espaciada | **`fsrs`** (PyPI, v6.3.2) | — | Algoritmo publicado y mantenido. Reimplementarlo sería tiempo perdido. |
@@ -527,7 +527,7 @@ Ritmo asumido: 10–20 h semanales, en paralelo a la búsqueda activa de empleo.
 |---|---|---|---|
 | **F0 · Cimientos** | 1 (real: del 7 de septiembre al 1 de octubre de 2026) | Ingesta a Postgres, normalización con spaCy, limpieza, recorte de frases. `compose` completo. CLI que muestra `cloze_original`. | Ingesta y calidad de datos sobre datos reales y sucios. |
 | **F1 · Primera IA** | 2–3 | Generación de distractores (A1) con salida Pydantic en el adaptador, validadores básico, D1 y D7 (D-027), bucle de reintento y degradación. Sigue siendo CLI. | Salidas estructuradas, validación, reintento con feedback, diseño de la degradación. |
-| **F2 · Medición** | 3–4 | Langfuse integrado. Arnés de evaluación con 100 casos y métricas deterministas. Informe versionado. | Evaluación de LLMs, coste y latencia por petición, metodología propia. **El diferenciador.** |
+| **F2 · Medición** | 3–4 | Langfuse integrado. Arnés de evaluación con 100 casos y métricas deterministas. Informe versionado. Comparación de métodos de desambiguación de sentidos, con su etiquetado de referencia (D-034). | Evaluación de LLMs, coste y latencia por petición, metodología propia. **El diferenciador.** |
 | **F3 · Producto** | 4–5 | API FastAPI, interfaz Angular mínima, FSRS conectado. **La aplicación pasa a ser usable a diario.** | Sistema completo de extremo a extremo. |
 | **F4 · Segunda IA** | 5–6 | Frases nuevas de práctica (A2) y juez semántico (A3, métricas J1–J3). Acuerdo del juez con etiquetado humano. | Generación anclada a contexto, LLM como juez y sus límites. |
 | **F5 · Orquestación** | 6–7 | El bucle migrado a LangGraph, con justificación documentada de por qué solo ahí. | LangGraph, grafos con estado, criterio sobre cuándo no usarlos. |
@@ -599,6 +599,8 @@ Ejecutadas antes de la F0 sobre el equipo real. Todo lo de esta sección está *
 
 Ollama carga las 37 capas del modelo de 4B en GPU (`offloaded 37/37`). Velocidad medida con Qwen3-4B: **65 tokens/s**.
 
+**Nota sobre las capas**: las 37 capas eran de Qwen3-4B. Con `qwen3.5:4b`, el registro de Ollama dice 34/34 (D-006, D-030).
+
 **Consecuencia**: quedan descartados los modelos de más de 9B. Un 9B en Q4 ocuparía unos 6,6 GB de los 6,9 disponibles y no dejaría margen para la caché de contexto.
 
 **Nota de instalación**: Ollama debe ir **dentro de WSL2**, no en Windows. La instalación en Windows solo escucha en `127.0.0.1` y no es accesible desde WSL sin abrir la red y el cortafuegos. La instalación en Linux requiere el paquete `zstd` como dependencia previa.
@@ -652,4 +654,4 @@ Es un modo de fallo no previsto en la v1.0 de este documento, detectado en cinco
 
 Endpoint: `POST http://localhost:11434/api/chat`
 
-**Nota sobre el idioma**: Qwen3.5 detecta el idioma del prompt y responde en él. Con los prompts escritos en español, hay que instruir explícitamente el idioma de salida.
+**Nota sobre el idioma**: Qwen3.5 detecta el idioma del prompt y responde en él. Con los prompts escritos en español, hay que instruir explícitamente el idioma de salida. En F1 el prompt se escribe en inglés, lo que elimina ese modo de fallo en vez de parchearlo (D-029).
