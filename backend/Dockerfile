@@ -13,6 +13,11 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 
+
+ENV WN_DATA_DIR=/opt/wn-data
+RUN uv run --no-sync python -m wn --dir "$WN_DATA_DIR" download oewn:2025 \
+    && rm -rf "$WN_DATA_DIR/downloads"
+
 # Capa de código: cambia en cada commit
 COPY src/ ./src/
 RUN uv sync --frozen
