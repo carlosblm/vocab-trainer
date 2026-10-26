@@ -140,3 +140,40 @@ def test_display_keeps_the_original_text() -> None:
     )
     assert DEFINITION in exercise.options
     assert all(option.endswith(".") for option in exercise.displayed_options)
+
+
+# La palabra en la frase (D-019).
+
+
+@pytest.mark.parametrize(
+    ("word", "message"),
+    [
+        # Dentro de otra palabra: `sojourn` está en `sojourned`, pero no como
+        # palabra completa.
+        ("sojourn", "palabra completa"),
+        # No está.
+        ("stayed", "palabra completa"),
+        # Vacía: el patrón vacío encajaría en cualquier borde.
+        ("", "vacía"),
+        ("  ", "vacía"),
+    ],
+)
+def test_word_must_appear_as_a_whole_word_in_the_sentence(
+    word: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        McqDefinition.new(SENTENCE, word, DEFINITION, DISTRACTORS, random.Random(7))
+
+
+def test_word_is_located_ignoring_case() -> None:
+    """Como en `ClozeOriginal`: la forma guardada puede ir en minúscula y abrir
+    la frase con mayúscula."""
+    exercise = McqDefinition.new(
+        "Sojourned there, they rested.",
+        "sojourned",
+        DEFINITION,
+        DISTRACTORS,
+        random.Random(7),
+    )
+
+    assert exercise.word == "sojourned"

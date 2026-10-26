@@ -13,7 +13,7 @@ from dataclasses import dataclass
 BLANK = "_____"
 
 
-def _whole_word(word: str) -> re.Pattern[str]:
+def whole_word(word: str) -> re.Pattern[str]:
     """Patrón que localiza `word` como palabra completa, sin distinguir
     mayúsculas.
 
@@ -24,6 +24,10 @@ def _whole_word(word: str) -> re.Pattern[str]:
       encajaría con `UKS.`.
     - El guion no es `\\w`, así que cuenta como borde: `savvy` se localiza en
       `tech-savvy`. Es la palabra que guardó la fuente, no el compuesto.
+
+    Pública porque `McqDefinition` comprueba con ella la misma invariante
+    (D-019), y la CLI resalta con ella la palabra: si cada uno localizara a su
+    manera, una frase podría valer para un ejercicio y no para el otro.
     """
     return re.compile(rf"(?<!\w){re.escape(word)}(?!\w)", re.IGNORECASE)
 
@@ -55,7 +59,7 @@ class ClozeOriginal:
             # Sin esta guarda el patrón vacío encaja entre dos caracteres que
             # no son de palabra, tapa la nada e `is_correct("")` da True.
             raise ValueError("la palabra del ejercicio está vacía")
-        if _whole_word(self.word).search(self.sentence) is None:
+        if whole_word(self.word).search(self.sentence) is None:
             raise ValueError(
                 f"«{self.word}» no aparece como palabra completa en la frase"
             )
@@ -63,7 +67,7 @@ class ClozeOriginal:
     @property
     def masked_sentence(self) -> str:
         """La frase con todas las apariciones de la palabra tapadas."""
-        return _whole_word(self.word).sub(BLANK, self.sentence)
+        return whole_word(self.word).sub(BLANK, self.sentence)
 
     @property
     def answer(self) -> str:
@@ -73,7 +77,7 @@ class ClozeOriginal:
         es la primera aparición. Para corregir da igual: se compara en
         minúsculas.
         """
-        match = _whole_word(self.word).search(self.sentence)
+        match = whole_word(self.word).search(self.sentence)
         assert match is not None, "__post_init__ garantiza que la palabra aparece"
         return match.group(0)
 

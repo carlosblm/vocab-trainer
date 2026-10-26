@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Self
 
 from vocab.domain.distractor_validation import word_tokens
+from vocab.domain.exercises.cloze_original import whole_word
 
 # La correcta y tres distractores, como en la variante de elección de
 # `cloze_original`: con menos, acertar al azar deja de ser un 25 %.
@@ -34,7 +35,9 @@ class McqDefinition:
     cuatro opciones en el orden en que se muestran.
 
     - `sentence` es la frase limpia del contexto, y `word`, la forma que se
-      consultó en ella (`Context.term`, D-020).
+      consultó en ella (`Context.term`, D-020). `word` aparece en `sentence`
+      como palabra completa, como en `ClozeOriginal` (D-019): es la que se
+      resalta al mostrar la frase.
     - `options` incluye la definición correcta y los tres distractores, con
       su texto original.
     """
@@ -47,6 +50,15 @@ class McqDefinition:
     def __post_init__(self) -> None:
         # Invariantes, no decisiones al nacer, como en `ClozeOriginalChoice`:
         # se comprueban también al reconstruir el ejercicio desde la base.
+        # La de la palabra es la de D-019, con la misma localización. La
+        # palabra vacía se rechaza por lo mismo que allí: el patrón vacío
+        # encaja en cualquier hueco entre caracteres que no son de palabra.
+        if not self.word.strip():
+            raise ValueError("la palabra del ejercicio está vacía")
+        if whole_word(self.word).search(self.sentence) is None:
+            raise ValueError(
+                f"«{self.word}» no aparece como palabra completa en la frase"
+            )
         if len(self.options) != OPTION_COUNT:
             raise ValueError(
                 f"hacen falta {OPTION_COUNT} opciones, no {len(self.options)}"
