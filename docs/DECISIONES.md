@@ -48,6 +48,9 @@ Este archivo es el material de entrevista del proyecto. Cuando pregunten "¿por 
 | D-032 | 2026-10-09 | F1 | Todo contexto que marca R1 va a `cloze_original` en F1 |
 | D-033 | 2026-10-09 | F1 | La definición se busca al importar y se guarda |
 | D-034 | 2026-10-09 | F1 | La desambiguación de sentidos pasa a F2, como comparación medida |
+| D-035 | 2026-10-26 | F1 | `mcq_definition` y plantilla de degradación |
+| D-036 | 2026-10-26 | F1 | `study` con `mcq_definition` |
+| D-037 | 2026-10-26 | F1 | Precalentamiento de Ollama y dos tiempos de espera |
 
 ---
 
@@ -1014,6 +1017,9 @@ de elección y 23 ms por uno de escritura. No hay nada que optimizar.
 cada palabra. Si los 13 contextos sin opciones molestan en el uso diario, el
 repliegue con palabras de las frases está medido: rescata 9.
 
+**Actualización (2026-10-26)**: por defecto, un contexto `eligible` da
+`mcq_definition`, y `--write` la excluye (D-036).
+
 ---
 
 ## D-023 · Un contrato de repositorio por caso de uso
@@ -1187,6 +1193,10 @@ Los datos no se commitean: se descargan.
 **Actualización (2026-10-26)**: lo de «falta el léxico en la imagen» está
 resuelto (D-031).
 
+**Actualización (2026-10-26)**: «paved the way» es un segundo caso, después
+de `chewed up`, en que un único sentido en el léxico no es el del contexto
+(D-036).
+
 ---
 
 ## D-026 · Un puerto por tarea de IA, no un `run` genérico
@@ -1273,6 +1283,13 @@ formal:
 - D7 marcó las negaciones de §12.4, y D1, la definición correcta copiada
   como distractor.
 
+**Actualización (2026-10-26)**: evidencia de sesiones reales, sin medición
+formal (D-036):
+
+- `chore`, con cuatro opciones casi sinónimas.
+- La paráfrasis en `forfeit`.
+- Los antónimos en `hotly`.
+
 ---
 
 ## D-028 · Bucle de generación: el motivo del reintento viaja como datos
@@ -1313,6 +1330,9 @@ y las violaciones; mal formado; o no disponible.
 **Actualización (2026-10-07)**: la carga del modelo ya no la cubre un
 reintento, sino el tiempo de espera. Un tiempo agotado no se reintenta; solo
 los 5xx (D-030).
+
+**Actualización (2026-10-26)**: la primera carga la cubre el precalentamiento
+(D-037); las recargas a mitad de sesión, el tiempo de espera para generar.
 
 ---
 
@@ -1427,6 +1447,12 @@ cubre la carga del modelo, solo duplica la espera antes de degradar.
   cargarlo con un tiempo de espera largo y avisar al usuario.
 - Durante la sesión, un tiempo de espera corto para generar.
 - Dos tiempos de espera configurables.
+
+**Actualización (2026-10-26)**: la revisión está hecha (D-037).
+
+- La configuración incluye `OLLAMA_LOAD_TIMEOUT_SECONDS`.
+- Los 150 s son ahora el tiempo de carga, y generar tiene 15 s.
+- El «Descartado» vale ya solo para las cargas que no son la primera.
 
 ---
 
@@ -1646,6 +1672,122 @@ contextos.
 Nimble, Laya y los modelos de desambiguación.
 
 **Revisión**: al cerrar F2, con los números.
+
+---
+
+## D-035 · `mcq_definition` y plantilla de degradación
+
+**Fecha**: 2026-10-26 · **Fase**: F1
+
+**Decisión**: `McqDefinition`, un tipo del dominio, y una plantilla
+determinista para cuando el modelo no da distractores (§7.3).
+
+**El ejercicio**:
+
+- Lleva la frase, la forma consultada, la definición correcta y tres
+  distractores.
+- El orden de las opciones se fija al crearse, con el azar por parámetro, y la
+  corrección es por índice.
+- Invariantes: cuatro opciones distintas por palabras, con la misma
+  normalización que los validadores; la correcta entre ellas; ninguna vacía; y
+  la palabra presente como palabra completa en la frase (D-019).
+
+**Presentación**: las cuatro opciones con el mismo estilo, con mayúscula
+inicial y punto final si no terminan en un signo final, para que la forma no
+delate la respuesta. Solo afecta a la presentación: el texto original se
+conserva.
+
+- **Descartado**: minúscula y sin punto, lo primero que se propuso. Se eligió
+  lo contrario por legibilidad, porque lo que importa es que el estilo sea
+  uniforme.
+
+**La plantilla** (§7.3):
+
+- Definiciones `eligible` de entradas que no son `noise`, del mismo idioma y
+  la misma categoría, de otro lema y otro sentido, sin repetir sentido.
+- Pasan `validate_distractors`.
+- Si no hay tres válidas, `None`, y el ejercicio es `cloze_original`.
+- **Descartado**: una plantilla sin validadores. Que sea determinista no la
+  libra de repetir una definición o contener la correcta.
+
+**Medido** sobre los 270 contextos `eligible` de la exportación de septiembre
+de 2026: los 270 tienen plantilla (NOUN 151, ADJ 50, VERB 47, ADV 22). Es una
+medición, no una garantía: con otro corpus podrían faltar candidatos.
+
+---
+
+## D-036 · `study` con `mcq_definition`
+
+**Fecha**: 2026-10-26 · **Fase**: F1
+
+**Decisión**: un contexto `eligible` da `mcq_definition`; el resto,
+`cloze_original` (D-022). `--write` nunca usa el generador.
+
+**Descartado**:
+
+- Alternar al azar entre opción múltiple y hueco: un criterio arbitrario.
+- La progresión de reconocer a escribir: necesita FSRS y es de F3.
+
+**Camino**:
+
+- El modelo acepta: `mcq_definition`.
+- Degradación, sin generador o distractores rechazados por las invariantes
+  del ejercicio: la plantilla (D-035), con aviso de la causa.
+- Plantilla vacía: `cloze_original`, con aviso.
+
+**El resultado del caso de uso** es una unión de tipos que lleva la
+procedencia de los distractores: modelo o plantilla, modelo, versión del
+prompt, intentos y causa. La aplicación no imprime nada.
+
+**Sin modelo**: sin tarea de LLM configurada, `study` funciona con la
+plantilla (§2.4). Con la tarea configurada y sin URL, se para con un error: es
+un fallo de configuración, y degradar en silencio lo ocultaría.
+
+**Observado** en sesiones reales, sin medición formal:
+
+- En `chore`, las cuatro opciones eran casi sinónimas, y en `forfeit`, un
+  distractor era una paráfrasis de la correcta. Los dos pasaron los
+  validadores.
+- En `hotly`, los distractores eran antónimos.
+- En «paved the way», la definición `eligible` era el sentido literal de un
+  modismo.
+- La plantilla da distractores inequívocos, pero fáciles.
+
+Es la pregunta abierta de §5.2 para A1, que responderá el arnés de F2.
+
+---
+
+## D-037 · Precalentamiento de Ollama y dos tiempos de espera
+
+**Fecha**: 2026-10-26 · **Fase**: F1
+
+**Decisión**: `warm_up` es un método del adaptador de Ollama, no del puerto:
+cargar el modelo es cosa del proveedor. Lo llama la CLI al empezar `study`.
+
+**Comprobado** contra la documentación y contra el servidor (Ollama 0.33.3):
+
+- `GET /api/ps` dice si el modelo está cargado.
+- `POST /api/chat` con `messages` vacío lo carga sin generar (`done_reason`:
+  `load`). La recarga tras descargarse el modelo por inactividad
+  (`keep_alive`), con el mismo proceso de Ollama, tardó 9,92 s.
+
+**Tiempos de espera**:
+
+- `OLLAMA_LOAD_TIMEOUT_SECONDS`: 150 s (D-030).
+- `OLLAMA_TIMEOUT_SECONDS`: 15 s, 2,3 veces la peor carga en frío que no es
+  la primera (Frío 2, 6,579 s). Con la muestra de 9,92 s, el margen para una
+  recarga a mitad de sesión baja a 1,5 veces. Un tiempo agotado cuesta un
+  ejercicio de plantilla.
+
+**Si el precalentamiento falla**, toda la sesión va con la plantilla, con un
+solo aviso al empezar. Usa la misma política de transporte que generar.
+
+**Respuesta no válida**: en los ejercicios de elección, una respuesta que no
+es un número del rango se vuelve a preguntar, en vez de contar como fallo.
+Cuando las respuestas alimenten el repaso (F3), una errata no debe contar como
+error.
+
+**Revisión**: si aparecen tiempos agotados en el uso.
 
 ---
 

@@ -1,7 +1,7 @@
 # Propuesta técnica — Aplicación de estudio de vocabulario
 
 **Documento de contexto del proyecto**
-Autor: Carlos Blázquez Martín · Versión 1.10 · Octubre 2026
+Autor: Carlos Blázquez Martín · Versión 1.11 · Octubre 2026
 
 ---
 
@@ -48,7 +48,7 @@ La información valiosa que el Kindle sí guarda y no explota es **la frase conc
 | Código | Ejercicio | Generación | Fase |
 |---|---|---|---|
 | `cloze_original` | La frase real del libro con la palabra tapada. El usuario la escribe o la elige. | Determinista | v1 |
-| `mcq_definition` | Se muestra la frase del libro y cuatro definiciones; una es correcta. | IA (distractores) | v1 |
+| `mcq_definition` | Se muestra la frase del libro y cuatro definiciones; una es correcta. | IA (distractores), o plantilla determinista si el modelo falla o no está configurado (D-035) | v1 |
 | `preposition_cloze` | La frase real con la **preposición** tapada. El usuario elige entre preposiciones. | **Determinista** | v1 |
 | `cloze_generated` | Una frase **nueva**, distinta de la del libro, con la palabra tapada. | IA (frase) | v1 |
 | `phrasal_verb` | Hueco sobre verbo y partícula, o elección de la partícula correcta. | Determinista + IA | Abierto (§2.5) |
@@ -485,6 +485,10 @@ Validador semántico (juez, J1–J3)  ───────┘
 **Reintentos (D-028).** Un intento inicial y, como máximo, dos reintentos. Cada reintento lleva solo el motivo del último fallo, como datos: los distractores rechazados y sus violaciones, o por qué la salida no se pudo leer. El texto que lee el modelo lo escribe el adaptador con las plantillas del prompt. Si el proveedor no responde, se pasa a la plantilla sin reintentar y se conserva el motivo para avisar; los reintentos de errores de transporte pasajeros son del adaptador.
 
 **Validadores deterministas de F1 (D-027)**: el básico (distractores vacíos o repetidos), D1 y D7. El juez entra en F4.
+
+**Degradaciones que no vienen del modelo (D-036).** Sin generador, porque la tarea no está configurada o el precalentamiento falló, los distractores salen de la plantilla. También cuando el modelo da distractores que pasan los validadores pero el ejercicio los rechaza por sus invariantes. Y si la plantilla no encuentra tres, el ejercicio es `cloze_original`, con aviso.
+
+**Precalentamiento (D-037).** Al empezar la sesión, si el modelo no está cargado, se carga con un tiempo de espera largo y se avisa de la espera. Si falla, toda la sesión va con la plantilla, con un solo aviso al empezar.
 
 ---
 
