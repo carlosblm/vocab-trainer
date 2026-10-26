@@ -6,6 +6,7 @@ Usa el fixture versionado (no el vocab.db real) para que corra en CI.
 from pathlib import Path
 
 from sqlalchemy import select, update
+from tests.unit.doubles import NO_CATEGORY, FakeLexicon
 
 from vocab.adapters.kindle import KindleVocabImporter
 from vocab.adapters.nlp.normalizer import normalize
@@ -19,7 +20,11 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "vocab_fixture.db"
 def test_known_status_survives_reimport(session):
     repository = PostgresVocabularyRepository(session)
     import_vocabulary(
-        KindleVocabImporter(FIXTURE), repository, normalize, "vocab_fixture.db"
+        KindleVocabImporter(FIXTURE),
+        repository,
+        normalize,
+        FakeLexicon(default=NO_CATEGORY),
+        "vocab_fixture.db",
     )
     session.flush()
 
@@ -31,7 +36,11 @@ def test_known_status_survives_reimport(session):
     session.flush()
 
     import_vocabulary(
-        KindleVocabImporter(FIXTURE), repository, normalize, "vocab_fixture.db"
+        KindleVocabImporter(FIXTURE),
+        repository,
+        normalize,
+        FakeLexicon(default=NO_CATEGORY),
+        "vocab_fixture.db",
     )
     session.flush()
 

@@ -37,11 +37,15 @@ class LexiconFacts:
       forma consultada en esa categoría.
     - `senses`: los sentidos del lema de la entrada en esa categoría, en el
       orden del léxico.
+    - `lexicon`: qué léxico lo sabe, por ejemplo `oewn:2025`. Viaja con los
+      hechos, como `model` en `GeneratedDistractors` (D-026): si el léxico
+      cambia, dice qué decisiones hay que recalcular (D-033).
     """
 
     pos_supported: bool
     term_lemmas: frozenset[str]
     senses: tuple[Sense, ...]
+    lexicon: str
 
 
 class DefinitionStatus(StrEnum):
@@ -62,9 +66,11 @@ class DefinitionStatus(StrEnum):
 @dataclass(frozen=True)
 class DefinitionDecision:
     """El estado y, solo si es `ELIGIBLE`, la definición y el sentido del que
-    sale. `sense_id` viaja para poder rastrear qué sentido se enseñó."""
+    sale. `sense_id` viaja para poder rastrear qué sentido se enseñó, y
+    `lexicon`, para saber de qué léxico salió la decisión."""
 
     status: DefinitionStatus
+    lexicon: str
     definition: str | None = None
     sense_id: str | None = None
 
@@ -96,28 +102,33 @@ def decide_definition(
        enseñaría «vientre». Con ella tampoco basta un único sentido: el único
        de `chew up` en `oewn:2025` es «censure severely or angrily», y es falso
        en la frase de la exportación de septiembre de 2026 donde aparece.
-       Elegir el sentido de una unidad es la selección de sentido de F4.
+       Elegir el sentido de una unidad es la selección de sentido de F2
+       (D-034).
     5. Un único sentido: `ELIGIBLE`, con su glosa y su identificador.
     6. Varios sentidos: `POLYSEMOUS`. Elegir uno es la selección de sentido de
-       F4.
+       F2 (D-034).
 
     Con el lema confirmado, el lema está en el léxico y tiene al menos un
     sentido. Si `senses` llega vacío, los hechos se contradicen y se lanza
     `ValueError`: es un fallo del adaptador, no un estado del contexto.
     """
+    lexicon = facts.lexicon
     if not facts.pos_supported:
-        return DefinitionDecision(DefinitionStatus.POS_UNMAPPED)
+        return DefinitionDecision(DefinitionStatus.POS_UNMAPPED, lexicon)
     if not facts.term_lemmas:
-        return DefinitionDecision(DefinitionStatus.FORM_NOT_FOUND)
+        return DefinitionDecision(DefinitionStatus.FORM_NOT_FOUND, lexicon)
     if facts.term_lemmas != {lemma.lower()}:
-        return DefinitionDecision(DefinitionStatus.LEMMA_DISAGREES)
+        return DefinitionDecision(DefinitionStatus.LEMMA_DISAGREES, lexicon)
     if particle is not None:
-        return DefinitionDecision(DefinitionStatus.LEXICAL_UNIT)
+        return DefinitionDecision(DefinitionStatus.LEXICAL_UNIT, lexicon)
 
     match facts.senses:
         case (sense,):
             return DefinitionDecision(
-                DefinitionStatus.ELIGIBLE, definition=sense.gloss, sense_id=sense.id
+                DefinitionStatus.ELIGIBLE,
+                lexicon,
+                definition=sense.gloss,
+                sense_id=sense.id,
             )
         case ():
             raise ValueError(
@@ -125,4 +136,4 @@ def decide_definition(
                 "pero no le da ningún sentido."
             )
         case _:
-            return DefinitionDecision(DefinitionStatus.POLYSEMOUS)
+            return DefinitionDecision(DefinitionStatus.POLYSEMOUS, lexicon)

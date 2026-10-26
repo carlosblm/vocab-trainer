@@ -7,6 +7,7 @@ Usa el fixture versionado (no el vocab.db real) para que corra en CI.
 from pathlib import Path
 
 from sqlalchemy import select
+from tests.unit.doubles import NO_CATEGORY, FakeLexicon
 
 from vocab.adapters.kindle import KindleVocabImporter
 from vocab.adapters.nlp.normalizer import normalize
@@ -22,7 +23,11 @@ def test_each_context_row_stores_the_features_of_its_own_form(session):
     necesita distractores en pasado para una y en infinitivo para la otra."""
     repository = PostgresVocabularyRepository(session)
     import_vocabulary(
-        KindleVocabImporter(FIXTURE), repository, normalize, "vocab_fixture.db"
+        KindleVocabImporter(FIXTURE),
+        repository,
+        normalize,
+        FakeLexicon(default=NO_CATEGORY),
+        "vocab_fixture.db",
     )
     session.flush()
 

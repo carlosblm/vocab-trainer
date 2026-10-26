@@ -6,6 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Self
 
+from vocab.domain.definition_policy import DefinitionDecision
 from vocab.domain.noise import LookedUpWord, is_noise
 
 
@@ -32,6 +33,13 @@ class Context:
     `None` si el normalizador no localizó el token; `morph = ""` es un token
     localizado sin rasgos. Juntos dicen qué palabras pueden ocupar el hueco
     sin que la gramática delate la respuesta (D-022).
+
+    `particle` es la partícula que la guarda R1 encuentra junto a esa forma
+    (D-008), o `None`. `definition` es lo que decidió la política de D-025
+    con el léxico al importar (D-033): el estado y, si es `eligible`, la
+    definición que se puede enseñar. `None` si no se evaluó, porque el
+    normalizador no localizó la palabra; no es lo mismo que `pos_unmapped`,
+    igual que `morph = None` no es `morph = ""`.
     """
 
     external_id: str
@@ -44,6 +52,8 @@ class Context:
     morph: str | None = None
     book_title: str | None = None
     book_lang: str | None = None
+    particle: str | None = None
+    definition: DefinitionDecision | None = None
 
     @property
     def is_usable(self) -> bool:

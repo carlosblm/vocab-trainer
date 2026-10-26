@@ -20,7 +20,7 @@ equivalente.
 
 La unidad de R1 no se busca. En F1, un contexto con partícula va a
 `cloze_original` esté o no la unidad en el léxico, y eso lo decide el dominio.
-La búsqueda volverá con la selección de sentido de F4.
+La búsqueda volverá con la selección de sentido de F2 (D-034).
 
 Solo hay léxico para inglés: cualquier otro idioma da `ValueError`.
 
@@ -54,7 +54,9 @@ WORDNET_POS: dict[str, tuple[str, ...]] = {
     "ADV": (ADV,),
 }
 
-_UNSUPPORTED = LexiconFacts(pos_supported=False, term_lemmas=frozenset(), senses=())
+_UNSUPPORTED = LexiconFacts(
+    pos_supported=False, term_lemmas=frozenset(), senses=(), lexicon=LEXICON
+)
 
 
 class LexiconNotDownloaded(Exception):
@@ -112,6 +114,7 @@ class OewnLexicon:
             pos_supported=True,
             term_lemmas=term_lemmas,
             senses=self._senses(query.lemma.lower(), pos_tags),
+            lexicon=LEXICON,
         )
 
     def _senses(self, lemma: str, pos_tags: tuple[str, ...]) -> tuple[Sense, ...]:

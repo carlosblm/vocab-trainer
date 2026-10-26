@@ -7,6 +7,7 @@ import pytest
 from dotenv import load_dotenv
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from tests.unit.doubles import NO_CATEGORY, FakeLexicon
 
 from vocab.adapters.kindle import KindleVocabImporter
 from vocab.adapters.nlp.normalizer import normalize
@@ -43,7 +44,11 @@ def test_reimport_is_incremental(session):
     repository = PostgresVocabularyRepository(session)
 
     first = import_vocabulary(
-        KindleVocabImporter(OLD_DB), repository, normalize, "vocab.db"
+        KindleVocabImporter(OLD_DB),
+        repository,
+        normalize,
+        FakeLexicon(default=NO_CATEGORY),
+        "vocab.db",
     )
     session.flush()
 
@@ -58,7 +63,11 @@ def test_reimport_is_incremental(session):
     assert _count_truncated(session) == 1
 
     second = import_vocabulary(
-        KindleVocabImporter(NEW_DB), repository, normalize, "vocab_new.db"
+        KindleVocabImporter(NEW_DB),
+        repository,
+        normalize,
+        FakeLexicon(default=NO_CATEGORY),
+        "vocab_new.db",
     )
     session.flush()
 
@@ -73,11 +82,21 @@ def test_reimport_is_incremental(session):
 
 def test_reimporting_same_file_creates_nothing(session):
     repository = PostgresVocabularyRepository(session)
-    import_vocabulary(KindleVocabImporter(OLD_DB), repository, normalize, "vocab.db")
+    import_vocabulary(
+        KindleVocabImporter(OLD_DB),
+        repository,
+        normalize,
+        FakeLexicon(default=NO_CATEGORY),
+        "vocab.db",
+    )
     session.flush()
 
     again = import_vocabulary(
-        KindleVocabImporter(OLD_DB), repository, normalize, "vocab.db"
+        KindleVocabImporter(OLD_DB),
+        repository,
+        normalize,
+        FakeLexicon(default=NO_CATEGORY),
+        "vocab.db",
     )
     assert again.entries_created == 0
     assert again.contexts_created == 0

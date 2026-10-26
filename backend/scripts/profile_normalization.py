@@ -3,8 +3,9 @@
 Ejecuta el caso de uso real (Kindle → limpieza → spaCy → ruido) contra un
 repositorio falso que se queda las entradas en memoria, y compara el
 agrupamiento por lema de spaCy contra el dedupe provisional de F0.3 (minúscula
-del término consultado). Lee la ruta del archivo de `VOCAB_TEST_DATA`; no se
-ejecuta en CI porque ese archivo no se commitea.
+del término consultado). Lee la ruta del archivo de `VOCAB_TEST_DATA` y la del
+léxico de `WN_DATA_DIR`, que el caso de uso necesita desde D-033; no se ejecuta
+en CI porque ese archivo no se commitea.
 """
 
 import os
@@ -13,6 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from vocab.adapters.kindle import KindleVocabImporter
+from vocab.adapters.lexicon import OewnLexicon
 from vocab.adapters.nlp.normalizer import normalize
 from vocab.application.import_vocabulary import import_vocabulary
 from vocab.domain.models import Entry, EntryStatus
@@ -84,8 +86,9 @@ def main() -> None:
 
     repository = CapturingRepository()
     normalizer = CapturingNormalizer()
+    lexicon = OewnLexicon(Path(os.environ["WN_DATA_DIR"]))
     import_vocabulary(
-        KindleVocabImporter(NEW_DB), repository, normalizer, "vocab_new.db"
+        KindleVocabImporter(NEW_DB), repository, normalizer, lexicon, "vocab_new.db"
     )
     entries = repository.entries
 

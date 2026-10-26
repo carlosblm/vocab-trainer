@@ -1,12 +1,14 @@
-"""Normalización lingüística con spaCy: lema y categoría gramatical.
+"""Normalización lingüística con spaCy: lema, categoría gramatical, rasgos y
+partícula.
 
 Implementa `ports.normalizer.Normalizer`. El lema y la categoría de una
 palabra dependen de su frase.
 
 Todo lo que sabe de spaCy vive en este paquete: qué modelo corresponde a cada
 idioma, cuándo se carga, qué token de la frase es la palabra consultada y qué
-forma tienen las tuplas que espera `nlp.pipe`. El cargador y la localización
-del token los comparte con la guarda de unidad léxica (`lexical_unit`).
+forma tienen las tuplas que espera `nlp.pipe`. La guarda de unidad léxica
+(`lexical_unit.particle_of`) se aplica aquí, sobre el mismo token y en la misma
+pasada (D-008).
 """
 
 from collections import defaultdict
@@ -17,6 +19,7 @@ import spacy
 from spacy.language import Language
 from spacy.tokens import Doc, Token
 
+from vocab.adapters.nlp.lexical_unit import particle_of
 from vocab.ports.normalizer import CleanedLookup, NormalizedWord
 
 MODELS = {"en": "en_core_web_sm"}
@@ -65,14 +68,15 @@ def _normalize_group(group: list[CleanedLookup], lang: str) -> list[NormalizedWo
         token = _first_occurrence(doc, item.word)
         if token is None:
             # Token no localizado: se degrada a la palabra en minúsculas y se
-            # marca con `pos = None` y `morph = None`. Nunca se descarta — el
-            # puerto promete un resultado por entrada.
+            # marca con `pos`, `morph` y `particle` a `None`. Nunca se descarta
+            # — el puerto promete un resultado por entrada.
             result.append(
                 NormalizedWord(
                     external_id=item.external_id,
                     lemma=item.word.lower(),
                     pos=None,
                     morph=None,
+                    particle=None,
                 )
             )
         else:
@@ -82,6 +86,7 @@ def _normalize_group(group: list[CleanedLookup], lang: str) -> list[NormalizedWo
                     lemma=token.lemma_.lower(),
                     pos=token.pos_,
                     morph=str(token.morph),
+                    particle=particle_of(token),
                 )
             )
 

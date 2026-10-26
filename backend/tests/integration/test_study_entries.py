@@ -7,10 +7,12 @@ también prueba que las funciones de traducción entre fila y entidad no pierden
 nada por el camino.
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from vocab.adapters.postgres.repository import PostgresVocabularyRepository
 from vocab.adapters.postgres.tables import UserRow
+from vocab.domain.definition_policy import DefinitionDecision, DefinitionStatus
 from vocab.domain.models import Context, Entry, EntryStatus
 
 
@@ -175,3 +177,44 @@ def test_candidate_entries_keep_unusable_and_unanalyzed_contexts(session):
     _store(repository, user_id, [entry])
 
     assert repository.list_non_noise_entries(user_id) == [entry]
+
+
+def test_particle_and_definition_come_back_as_stored(session):
+    """La decisión de D-025 vuelve igual que se guardó: con la definición y el
+    sentido si es `eligible`, sin ellos si no, y como `None` si el contexto no
+    se evaluó (D-033)."""
+    repository = PostgresVocabularyRepository(session)
+    user_id = repository.ensure_user()
+    eligible = DefinitionDecision(
+        DefinitionStatus.ELIGIBLE,
+        "oewn:2025",
+        definition="spend a certain length of time; reside temporarily",
+        sense_id="oewn-sojourn__2.42.00..",
+    )
+    unit = DefinitionDecision(DefinitionStatus.LEXICAL_UNIT, "oewn:2025")
+    entry = _entry(
+        "sojourn",
+        EntryStatus.LEARNING,
+        [
+            replace(
+                _context("l1", "sojourned", "They sojourned there."),
+                definition=eligible,
+            ),
+            replace(
+                _context("l2", "sojourned", "They sojourned on."),
+                particle="on",
+                definition=unit,
+            ),
+            _context("l3", "sojourn", "A sojourn.", pos=None, morph=None),
+        ],
+    )
+    _store(repository, user_id, [entry])
+
+    [stored] = repository.list_learning_entries_with_usable_context(user_id)
+
+    assert stored == entry
+    assert [(c.particle, c.definition) for c in stored.contexts] == [
+        (None, eligible),
+        ("on", unit),
+        (None, None),
+    ]

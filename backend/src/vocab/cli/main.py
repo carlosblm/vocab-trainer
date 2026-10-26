@@ -2,9 +2,11 @@
 
 Es el único sitio que conoce a la vez los casos de uso y los adaptadores
 concretos. Aquí se construyen el motor de Postgres, el importador de Kindle, el
-normalizador de spaCy y el generador aleatorio, y se inyectan en los casos de
-uso, que solo conocen los puertos. Por eso los casos de uso se prueban sin base
-de datos ni spaCy, y por eso cambiar de adaptador no los toca.
+normalizador de spaCy, el léxico de OEWN y el generador aleatorio, y se
+inyectan en los casos de uso, que solo conocen los puertos. Por eso los casos
+de uso se prueban sin base de datos ni spaCy, y por eso cambiar de adaptador no
+los toca. El léxico solo lo construye `import`: `study` lee la definición ya
+guardada (D-033).
 
 La sesión también se abre y se cierra aquí: quien crea un recurso gestiona su
 ciclo de vida, incluida la transacción.
@@ -21,6 +23,8 @@ from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session
 
 from vocab.adapters.kindle import KindleVocabImporter
+from vocab.adapters.lexicon import LexiconNotDownloaded, OewnLexicon
+from vocab.adapters.lexicon.oewn import LEXICON
 from vocab.adapters.nlp.normalizer import normalize
 from vocab.adapters.postgres.repository import PostgresVocabularyRepository
 from vocab.application.import_vocabulary import import_vocabulary
@@ -56,13 +60,17 @@ def import_command(
 ) -> None:
     """Importa un vocab.db.
 
-    Solo añade lo nuevo y nunca toca lo que ya hay (D-012).
+    Solo añade lo nuevo y nunca toca lo que ya hay (D-012). Guarda con cada
+    contexto la definición que se puede enseñar, así que necesita el léxico en
+    WN_DATA_DIR (D-033).
     """
+    lexicon = _lexicon()
     with _engine() as engine, Session(engine) as session:
         stats = import_vocabulary(
             KindleVocabImporter(path),
             PostgresVocabularyRepository(session),
             normalize,
+            lexicon,
             filename=path.name,
         )
         # Una importación es una sola transacción: fuente, entradas y
@@ -79,6 +87,25 @@ def import_command(
         f"Contextos: {stats.contexts_created} nuevos, "
         f"{stats.contexts_existing} ya existían."
     )
+
+
+def _lexicon() -> OewnLexicon:
+    """El léxico de la importación, antes de abrir la base: sin él no se
+    importa nada, ni siquiera a medias."""
+    data_dir = get_settings().wn_data_dir
+    if data_dir is None:
+        typer.echo(
+            "Falta WN_DATA_DIR. La importación guarda con cada contexto la "
+            f"definición que da el léxico {LEXICON} (D-033). Define en .env el "
+            "directorio donde está, por ejemplo WN_DATA_DIR=~/wn-data.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    try:
+        return OewnLexicon(data_dir)
+    except LexiconNotDownloaded as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
 
 
 @app.command()

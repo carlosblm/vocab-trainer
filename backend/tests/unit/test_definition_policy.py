@@ -15,6 +15,7 @@ from vocab.domain.definition_policy import (
     decide_definition,
 )
 
+LEXICON = "fake:1"
 ONE_SENSE = (Sense("crave-1", "have an urgent desire for"),)
 TWO_SENSES = (
     Sense("come-1", "move toward"),
@@ -29,7 +30,10 @@ def _facts(
     senses: tuple[Sense, ...] = ONE_SENSE,
 ) -> LexiconFacts:
     return LexiconFacts(
-        pos_supported=pos_supported, term_lemmas=term_lemmas, senses=senses
+        pos_supported=pos_supported,
+        term_lemmas=term_lemmas,
+        senses=senses,
+        lexicon=LEXICON,
     )
 
 
@@ -37,11 +41,11 @@ def _facts(
 
 
 def test_unsupported_category_is_pos_unmapped() -> None:
-    facts = LexiconFacts(pos_supported=False, term_lemmas=frozenset(), senses=())
+    facts = _facts(pos_supported=False, term_lemmas=frozenset(), senses=())
 
     decision = decide_definition("bevel", None, facts)
 
-    assert decision == DefinitionDecision(DefinitionStatus.POS_UNMAPPED)
+    assert decision == DefinitionDecision(DefinitionStatus.POS_UNMAPPED, LEXICON)
 
 
 def test_form_without_lemmas_is_form_not_found() -> None:
@@ -71,7 +75,7 @@ def test_particle_is_lexical_unit() -> None:
 
     decision = decide_definition("come", "up", facts)
 
-    assert decision == DefinitionDecision(DefinitionStatus.LEXICAL_UNIT)
+    assert decision == DefinitionDecision(DefinitionStatus.LEXICAL_UNIT, LEXICON)
 
 
 def test_single_sense_is_eligible_with_its_gloss_and_id() -> None:
@@ -79,6 +83,7 @@ def test_single_sense_is_eligible_with_its_gloss_and_id() -> None:
 
     assert decision == DefinitionDecision(
         DefinitionStatus.ELIGIBLE,
+        LEXICON,
         definition="have an urgent desire for",
         sense_id="crave-1",
     )
@@ -89,14 +94,14 @@ def test_several_senses_are_polysemous() -> None:
 
     decision = decide_definition("come", None, facts)
 
-    assert decision == DefinitionDecision(DefinitionStatus.POLYSEMOUS)
+    assert decision == DefinitionDecision(DefinitionStatus.POLYSEMOUS, LEXICON)
 
 
 # El orden: cada comprobación gana a la siguiente.
 
 
 def test_category_is_checked_before_the_form() -> None:
-    facts = LexiconFacts(pos_supported=False, term_lemmas=frozenset(), senses=())
+    facts = _facts(pos_supported=False, term_lemmas=frozenset(), senses=())
 
     assert decide_definition("x", None, facts).status is DefinitionStatus.POS_UNMAPPED
 
@@ -158,4 +163,17 @@ def test_definition_travels_only_with_eligible(
     status: DefinitionStatus, definition: str | None, sense_id: str | None
 ) -> None:
     with pytest.raises(ValueError, match="ELIGIBLE"):
-        DefinitionDecision(status, definition=definition, sense_id=sense_id)
+        DefinitionDecision(status, LEXICON, definition=definition, sense_id=sense_id)
+
+
+def test_decision_carries_the_lexicon_of_its_facts() -> None:
+    """De qué léxico salió cada decisión, para saber qué recalcular si cambia
+    (D-033)."""
+    facts = LexiconFacts(
+        pos_supported=True,
+        term_lemmas=frozenset({"crave"}),
+        senses=ONE_SENSE,
+        lexicon="oewn:2025",
+    )
+
+    assert decide_definition("crave", None, facts).lexicon == "oewn:2025"

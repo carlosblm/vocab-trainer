@@ -91,6 +91,7 @@ def _add_known_past_verbs(engine: Engine, *terms: str) -> None:
         session.commit()
 
 
+@pytest.mark.usefixtures("lexicon")
 def test_import_commits_what_it_imports(database):
     result = runner.invoke(app, ["import", str(FIXTURE)])
 
@@ -99,6 +100,33 @@ def test_import_commits_what_it_imports(database):
     assert "Contextos: 8 nuevos, 0 ya existían." in result.output
     assert _count(database, EntryRow) == 5
     assert _count(database, ContextRow) == 8
+    # El léxico queda cableado: cada contexto con categoría trae su decisión,
+    # con el léxico que la produjo, y uno sin categoría no (D-033).
+    with Session(database) as session:
+        rows = session.execute(
+            select(ContextRow.pos, ContextRow.definition_status, ContextRow.lexicon)
+        ).all()
+    assert {(pos is None, status is None) for pos, status, _ in rows} <= {
+        (True, True),
+        (False, False),
+    }
+    assert {lexicon for _, status, lexicon in rows if status} == {"oewn:2025"}
+
+
+def test_import_without_lexicon_directory_fails_before_touching_the_database(
+    database, monkeypatch, tmp_path
+):
+    """Sin WN_DATA_DIR no se importa nada, ni siquiera a medias. El directorio
+    de trabajo vacío deja fuera el `.env` que lo define."""
+    monkeypatch.delenv("WN_DATA_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    get_settings.cache_clear()
+
+    result = runner.invoke(app, ["import", str(FIXTURE)])
+
+    assert result.exit_code == 1
+    assert "Falta WN_DATA_DIR" in result.output
+    assert _count(database, UserRow) == 0
 
 
 def test_import_of_a_missing_file_fails_before_touching_the_database(
@@ -121,6 +149,7 @@ def test_study_with_nothing_to_study_says_so_and_writes_nothing(database):
     assert _count(database, UserRow) == 0
 
 
+@pytest.mark.usefixtures("lexicon")
 def test_study_accepts_the_answer_ignoring_case_and_spaces(database):
     runner.invoke(app, ["import", str(FIXTURE)])
     _only_in_study(database, "stake")
@@ -133,6 +162,7 @@ def test_study_accepts_the_answer_ignoring_case_and_spaces(database):
     assert "1 de 1 correctas." in result.output
 
 
+@pytest.mark.usefixtures("lexicon")
 def test_study_shows_the_word_and_the_clean_sentence_after_a_miss(database):
     """El contexto de `brow` llega sucio (`…more.[59].[`): tras el fallo se
     muestra la frase limpia, no la cruda."""
@@ -148,6 +178,7 @@ def test_study_shows_the_word_and_the_clean_sentence_after_a_miss(database):
     assert "0 de 1 correctas." in result.output
 
 
+@pytest.mark.usefixtures("lexicon")
 def test_study_offers_four_options_and_takes_a_number_or_the_word(database):
     """El orden de las opciones es aleatorio: el test lee cuál es la 1 y
     comprueba que el veredicto le corresponde."""
@@ -167,6 +198,7 @@ def test_study_offers_four_options_and_takes_a_number_or_the_word(database):
     assert verdicts == [first_verdict, "Correcto"]
 
 
+@pytest.mark.usefixtures("lexicon")
 def test_study_without_three_distractors_asks_to_write_and_says_why(database):
     """`stake` solo comparte forma con `brow`: el aviso dice cuántas hay, cuál
     es la forma y por qué hacen falta tres."""
@@ -185,6 +217,7 @@ def test_study_without_three_distractors_asks_to_write_and_says_why(database):
     assert "Correcto." in result.output
 
 
+@pytest.mark.usefixtures("lexicon")
 def test_study_write_asks_to_type_even_when_there_are_options(database):
     runner.invoke(app, ["import", str(FIXTURE)])
     _only_in_study(database, "ease")

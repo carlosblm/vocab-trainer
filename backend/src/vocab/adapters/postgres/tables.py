@@ -80,10 +80,33 @@ class ContextRow(Base):
 
     `term` es la forma consultada en esta frase; `entries.term` es solo la de
     la consulta más antigua de la entrada.
+
+    `particle` es la de la guarda R1, y las cuatro columnas de definición son
+    la decisión de la política de D-025 al importar (D-033). Las CHECK
+    repiten en la base la invariante de `DefinitionDecision`: `definition` y
+    `sense_id` solo con `eligible`, y `lexicon` siempre que haya estado. Un
+    estado `NULL` es un contexto sin evaluar, y entonces no hay nada más.
     """
 
     __tablename__ = "contexts"
-    __table_args__ = (UniqueConstraint("entry_id", "external_id"),)
+    __table_args__ = (
+        UniqueConstraint("entry_id", "external_id"),
+        CheckConstraint(
+            "definition_status IN ('eligible', 'pos_unmapped', 'form_not_found', "
+            "'lemma_disagrees', 'lexical_unit', 'polysemous')",
+            name="definition_status_valid",
+        ),
+        CheckConstraint(
+            "COALESCE(definition_status = 'eligible', false) = (definition IS NOT NULL)"
+            " AND COALESCE(definition_status = 'eligible', false) = "
+            "(sense_id IS NOT NULL)",
+            name="definition_only_if_eligible",
+        ),
+        CheckConstraint(
+            "(definition_status IS NULL) = (lexicon IS NULL)",
+            name="lexicon_with_status",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     entry_id: Mapped[int] = mapped_column(
@@ -96,6 +119,11 @@ class ContextRow(Base):
     is_truncated: Mapped[bool] = mapped_column(Boolean, default=False)
     pos: Mapped[str | None] = mapped_column(String(16))
     morph: Mapped[str | None] = mapped_column(String(255))
+    particle: Mapped[str | None] = mapped_column(String(32))
+    definition_status: Mapped[str | None] = mapped_column(String(32))
+    definition: Mapped[str | None] = mapped_column(Text)
+    sense_id: Mapped[str | None] = mapped_column(String(255))
+    lexicon: Mapped[str | None] = mapped_column(String(64))
     book_title: Mapped[str | None] = mapped_column(String(500))
     book_lang: Mapped[str | None] = mapped_column(String(8))
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

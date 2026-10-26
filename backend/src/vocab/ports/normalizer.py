@@ -43,13 +43,18 @@ class NormalizedWord:
 
     `pos = None` significa que el token no se localizó en la frase. En ese
     caso `lemma` es la palabra consultada en minúsculas: se degrada, no se
-    pierde, y `morph` también es `None`.
+    pierde, y `morph` y `particle` también son `None`.
+
+    `particle` es la partícula de la guarda R1 (D-008), en minúsculas, o
+    `None`. Sale de aquí y no de otro puerto porque R1 mira el mismo token del
+    que salen `pos` y `morph`, en la misma pasada.
     """
 
     external_id: str
     lemma: str
     pos: str | None
     morph: str | None
+    particle: str | None
 
     @property
     def is_resolved(self) -> bool:

@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from vocab.adapters.postgres.tables import ContextRow, EntryRow, SourceRow, UserRow
+from vocab.domain.definition_policy import DefinitionDecision, DefinitionStatus
 from vocab.domain.models import Context, Entry, EntryStatus
 from vocab.ports.repository import ImportStats
 
@@ -94,10 +95,14 @@ class PostgresVocabularyRepository:
                         is_truncated=context.is_truncated,
                         pos=context.pos,
                         morph=context.morph,
+                        particle=context.particle,
+                        **_definition_columns(context.definition),
                         book_title=context.book_title,
                         book_lang=context.book_lang,
                         captured_at=context.captured_at,
                     )
+                    # Un contexto ya guardado conserva su decisión aunque el
+                    # lote traiga otra: la reimportación no toca nada (D-012).
                     .on_conflict_do_nothing(index_elements=["entry_id", "external_id"])
                     .returning(ContextRow.id)
                 )
@@ -183,4 +188,41 @@ def _context_from_row(row: ContextRow) -> Context:
         morph=row.morph,
         book_title=row.book_title,
         book_lang=row.book_lang,
+        particle=row.particle,
+        definition=_definition_from_row(row),
+    )
+
+
+def _definition_columns(decision: DefinitionDecision | None) -> dict[str, str | None]:
+    """La decisión en sus cuatro columnas; todas `NULL` si no se evaluó."""
+    if decision is None:
+        return {
+            "definition_status": None,
+            "definition": None,
+            "sense_id": None,
+            "lexicon": None,
+        }
+    return {
+        "definition_status": decision.status.value,
+        "definition": decision.definition,
+        "sense_id": decision.sense_id,
+        "lexicon": decision.lexicon,
+    }
+
+
+def _definition_from_row(row: ContextRow) -> DefinitionDecision | None:
+    """La decisión guardada, o `None` si el contexto no se evaluó.
+
+    Pasa otra vez por `DefinitionDecision`, así que su invariante también se
+    comprueba al leer, no solo con las CHECK de la tabla.
+    """
+    if row.definition_status is None:
+        return None
+    # La CHECK `lexicon_with_status` lo garantiza; el assert se lo dice a mypy.
+    assert row.lexicon is not None, "un contexto evaluado tiene léxico"
+    return DefinitionDecision(
+        DefinitionStatus(row.definition_status),
+        row.lexicon,
+        definition=row.definition,
+        sense_id=row.sense_id,
     )
