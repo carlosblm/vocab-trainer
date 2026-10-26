@@ -1,7 +1,7 @@
 # Propuesta técnica — Aplicación de estudio de vocabulario
 
 **Documento de contexto del proyecto**
-Autor: Carlos Blázquez Martín · Versión 1.9 · Octubre 2026
+Autor: Carlos Blázquez Martín · Versión 1.10 · Octubre 2026
 
 ---
 
@@ -266,7 +266,8 @@ entries   (id, user_id, source_id, external_id, term, lemma, lang, status,
            first_seen_at)
           UNIQUE (user_id, lemma, lang)
 contexts  (id, entry_id, external_id, term, raw_sentence, clean_sentence,
-           is_truncated, pos, morph, book_title, book_lang, captured_at)
+           is_truncated, pos, morph, particle, definition_status, definition,
+           sense_id, lexicon, book_title, book_lang, captured_at)
           UNIQUE (entry_id, external_id)
 exercises        (id, entry_id, context_id, kind, lang, payload,
                   generator, model, prompt_version, validation_report, created_at)
@@ -283,6 +284,8 @@ Notas de diseño:
 - `pos` vive en `contexts`, no en `entries`: la categoría gramatical depende de la frase donde aparece la palabra, no de la palabra en sí — la misma palabra puede ser verbo en un libro y sustantivo en otro. `entries.status` (`learning`/`known`/`noise`) sí es propiedad de la entrada, porque es el estado de estudio del usuario sobre esa palabra, no de una consulta concreta.
 - `contexts.term` guarda la forma consultada en esa frase; `entries.term` es solo la de la consulta más antigua de la entrada. En una entrada con varias formas (`relied`, `rely`), cada contexto necesita la suya para localizar la palabra en su frase (D-020).
 - `contexts.morph` guarda los rasgos morfológicos de esa forma en esa frase, en formato FEATS de Universal Dependencies (`Tense=Past|VerbForm=Fin`). Con `pos`, decide qué palabras pueden ser distractores en la variante de elección sin que la gramática delate la respuesta (D-022). `""` es un token sin rasgos; `NULL`, uno que el normalizador no localizó.
+- `contexts.particle` guarda la partícula de R1 (D-008, D-032).
+- `contexts.definition_status` es el estado que decidió la política de D-025 al importar; vacío (`NULL`) significa «no evaluado». `definition` y `sense_id` solo van con `eligible`, y `lexicon` dice qué léxico produjo el estado (D-033).
 - `external_id` guarda el identificador de la fuente (`en:resilient`, `LOOKUPS.id`). Es lo que hace idempotente la reimportación (D-012).
 - La ingesta no escribe nunca en `reviews` ni en `scheduling_state`. El progreso del usuario vive en tablas que la importación no toca, y esa separación es lo que hace segura la reimportación.
 

@@ -314,6 +314,14 @@ puede enseñar un significado falso, que es el daño que esta guarda previene.
 `cloze_original` en F1 (D-032). La frase de que la definición de la unidad
 «sigue siendo correcta» queda refutada por `chewed up`.
 
+**Actualización (2026-10-26)**:
+
+- La regla de R1 la aplica el normalizador, sobre el mismo token que `pos` y
+  `morph`, con la función pública `particle_of`.
+- `detect_particles` delega en el normalizador, para que solo haya una
+  implementación, con una importación local que rompe un ciclo.
+- La partícula se guarda en `contexts.particle`.
+
 ---
 
 ## D-009 · `preposition_cloze` entra en la v1 y no usa IA
@@ -401,6 +409,13 @@ falla con `E050`. Se detectó a mano, no por CI, que todavía no existe: un
 la imagen caía en lo mismo. Tras la corrección, importar el `vocab.db` de
 septiembre de 2026 sobre una base vacía da 860 entradas y 1.024 contextos
 tanto en la imagen como en el `.venv`.
+
+**Verificado (2026-10-26)**:
+
+- Importar la exportación de septiembre dentro de la imagen, con el léxico, da
+  los mismos recuentos que en el `.venv` (D-031, D-033).
+- Observado, para F6: la imagen no incluye `alembic.ini` ni `migrations/`, y
+  lleva 406 MB de caché de `uv` en `/root/.cache/uv`.
 
 
 ---
@@ -631,6 +646,9 @@ por caso de uso, así que ahora son cuatro puertos: importador, normalizador,
 `DistractorGenerator` (D-026).
 
 **Actualización (2026-10-09)**: ahora son seis puertos, con `Lexicon` (D-031).
+
+**Actualización (2026-10-26)**: el puerto del normalizador devuelve también la
+partícula de R1 (`NormalizedWord.particle`).
 
 **Revisión**: el contrato tiene una sola implementación, así que su capacidad
 real de abstraer está sin verificar. El primer examen llega con un segundo
@@ -1166,6 +1184,9 @@ Los datos no se commitean: se descargan.
 - Del punto «Al hacer el adaptador», `wn` ya es dependencia principal
   (D-031); falta el léxico en la imagen.
 
+**Actualización (2026-10-26)**: lo de «falta el léxico en la imagen» está
+resuelto (D-031).
+
 ---
 
 ## D-026 · Un puerto por tarea de IA, no un `run` genérico
@@ -1456,6 +1477,16 @@ reproduce exactamente la tabla de D-025.
 **Pendiente**: el léxico en la imagen Docker (lección de D-021), con la pieza
 que guarda la definición al importar.
 
+**Actualización (2026-10-26)**: lo pendiente está resuelto.
+
+- El léxico va en la imagen, en `/opt/wn-data`, con `WN_DATA_DIR` definido en
+  el `Dockerfile`.
+- Va en una capa entre las dependencias y el código, fuera del entorno virtual
+  para que ningún `uv sync` lo borre: lo contrario del modelo de spaCy en
+  D-021.
+- La capa ocupa 99,9 MB (`wn.db`, 96,7 MB). La imagen pasa de 350.157.590 a
+  386.313.327 B.
+
 ---
 
 ## D-032 · Todo contexto que marca R1 va a `cloze_original` en F1
@@ -1523,6 +1554,44 @@ se usa al importar, y solo para los contextos nuevos (D-012).
   contextos existentes, porque la reimportación no los toca.
 
 **Estado**: decidida, sin implementar.
+
+**Actualización (2026-10-26)**: implementada.
+
+- Se evalúa el lote entero, pero solo se guardan los contextos nuevos (`ON
+  CONFLICT DO NOTHING`, D-012).
+- Columnas nuevas en `contexts`: `particle`, `definition_status`,
+  `definition`, `sense_id` y `lexicon`, con tres CHECK.
+- Un contexto sin `pos` (no localizado) queda sin evaluar (`NULL`), sin
+  confundirlo con `pos_unmapped`: son 2 en septiembre, las consultas de `M`.
+- La migración se niega a ejecutarse con filas.
+- Corrección: la base del léxico no se carga entera en memoria, pero Morphy sí
+  carga los lemas del léxico al abrirlo. La memoria máxima del proceso pasa de
+  34 a 86 MiB.
+
+Coste medido al importar septiembre en una base vacía:
+
+| | Vuelta 1 | Vuelta 2 | Vuelta 3 |
+|---|---|---|---|
+| Antes | 5,26 s | 5,37 s | 5,28 s |
+| Después | 10,94 s | 11,06 s | 10,77 s |
+
+Abrir el léxico cuesta 5,00 s (Morphy, 4,89 s); `facts` sobre 1.022 consultas,
+0,26 s; normalizar las 1.024 consultas, 2,39 s. Es aceptable: es un coste fijo,
+y la importación es ocasional.
+
+Recuentos sobre los 1.024 contextos:
+
+| Estado | Contextos |
+|---|---|
+| `polysemous` | 606 |
+| `eligible` | 271 |
+| `pos_unmapped` | 61 |
+| `form_not_found` | 44 |
+| `lemma_disagrees` | 27 |
+| `lexical_unit` | 13 |
+| sin evaluar | 2 |
+
+Sobre los 999 de `study`, los de D-032.
 
 ---
 
