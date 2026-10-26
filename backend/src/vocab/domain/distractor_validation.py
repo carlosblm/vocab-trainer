@@ -151,12 +151,12 @@ def validate_distractors(
             f"No hay marcadores de negación para el idioma {lang!r}: "
             "añade su lista en NEGATION_MARKERS."
         )
-    correct = _tokens(correct_definition)
+    correct = word_tokens(correct_definition)
     if not correct:
         raise ValueError(
             f"La definición correcta no tiene tokens: {correct_definition!r}"
         )
-    candidates = tuple(_tokens(distractor) for distractor in distractors)
+    candidates = tuple(word_tokens(distractor) for distractor in distractors)
 
     return (
         *_empty(candidates),
@@ -166,8 +166,12 @@ def validate_distractors(
     )
 
 
-def _tokens(text: str) -> Tokens:
+def word_tokens(text: str) -> Tokens:
     """La normalización común: ver «Tokens, no caracteres» en el módulo.
+
+    Pública porque `McqDefinition` compara sus opciones con ella: si el
+    ejercicio y los validadores normalizaran distinto, dos opciones podrían ser
+    distintas para uno e iguales para el otro.
 
     NFC antes que nada: una tilde puede llegar como carácter aparte (NFD), que
     no es letra y partiría la palabra.

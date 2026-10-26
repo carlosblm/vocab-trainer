@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from vocab.application.next_exercise import ChoiceFallback, next_exercise
 from vocab.domain.exercises.cloze_original import ClozeOriginal
 from vocab.domain.exercises.cloze_original_choice import ClozeOriginalChoice
+from vocab.domain.exercises.definition_template import DefinitionCandidate
 from vocab.domain.models import Context, Entry
 
 PAST = "Tense=Past|VerbForm=Fin"
@@ -41,6 +42,10 @@ class FakeRepository:
     def list_non_noise_entries(self, user_id: int) -> list[Entry]:
         self.candidate_reads += 1
         return self._candidates
+
+    def list_definition_candidates(self, user_id: int) -> list[DefinitionCandidate]:
+        # `next_exercise` todavía no la usa; está para cumplir el puerto.
+        return []
 
 
 class InOrder(random.Random):

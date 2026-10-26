@@ -13,6 +13,7 @@ cada caso de uso.
 from dataclasses import dataclass
 from typing import Protocol
 
+from vocab.domain.exercises.definition_template import DefinitionCandidate
 from vocab.domain.models import Entry
 
 
@@ -69,5 +70,16 @@ class StudyRepository(Protocol):
         Cada entrada llega completa, con todos sus contextos, también los
         truncados o sin analizar: decidir cuáles sirven es cosa de la regla de
         distractores. El orden es estable, por la misma razón que arriba.
+        """
+        ...
+
+    def list_definition_candidates(self, user_id: int) -> list[DefinitionCandidate]:
+        """Las definiciones `eligible` de las entradas que no son `noise`: de
+        ellas sale la plantilla de degradación de `mcq_definition` (§7.3).
+
+        De cualquier contexto, también de los truncados: la definición es del
+        sentido, no de la frase. Se lee en cada llamada, como los candidatos de
+        D-022, y el orden es estable por la misma razón que arriba. Decidir
+        cuáles sirven para un ejercicio es cosa de la plantilla.
         """
         ...

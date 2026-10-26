@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from vocab.adapters.postgres.tables import ContextRow, EntryRow, SourceRow, UserRow
 from vocab.domain.definition_policy import DefinitionDecision, DefinitionStatus
+from vocab.domain.exercises.definition_template import DefinitionCandidate
 from vocab.domain.models import Context, Entry, EntryStatus
 from vocab.ports.repository import ImportStats
 
@@ -130,6 +131,41 @@ class PostgresVocabularyRepository:
         # `!= noise` y no `IN (learning, known)`: un estado nuevo que se añada
         # al CHECK aportará distractores salvo que alguien decida lo contrario.
         return self._load_entries(user_id, EntryRow.status != EntryStatus.NOISE.value)
+
+    def list_definition_candidates(self, user_id: int) -> list[DefinitionCandidate]:
+        # Una consulta, solo con las columnas que la plantilla usa: no hace
+        # falta reconstruir las entradas enteras.
+        rows = self._session.execute(
+            select(
+                EntryRow.lemma,
+                EntryRow.lang,
+                ContextRow.pos,
+                ContextRow.sense_id,
+                ContextRow.definition,
+            )
+            .join(ContextRow, ContextRow.entry_id == EntryRow.id)
+            .where(
+                EntryRow.user_id == user_id,
+                EntryRow.status != EntryStatus.NOISE.value,
+                ContextRow.definition_status == DefinitionStatus.ELIGIBLE.value,
+            )
+            .order_by(EntryRow.id, ContextRow.id)
+        ).tuples()
+        candidates = []
+        for lemma, lang, pos, sense_id, definition in rows:
+            # Un contexto evaluado tiene categoría, y uno `eligible`, definición
+            # y sentido (CHECK de la tabla); los asserts se lo dicen a mypy.
+            assert pos is not None and sense_id is not None and definition is not None
+            candidates.append(
+                DefinitionCandidate(
+                    lemma=lemma,
+                    lang=lang,
+                    pos=pos,
+                    sense_id=sense_id,
+                    definition=definition,
+                )
+            )
+        return candidates
 
     def _load_entries(
         self, user_id: int, status_filter: ColumnElement[bool]

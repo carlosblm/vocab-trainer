@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from vocab.adapters.postgres.repository import PostgresVocabularyRepository
 from vocab.adapters.postgres.tables import UserRow
 from vocab.domain.definition_policy import DefinitionDecision, DefinitionStatus
+from vocab.domain.exercises.definition_template import DefinitionCandidate
 from vocab.domain.models import Context, Entry, EntryStatus
 
 
@@ -217,4 +218,73 @@ def test_particle_and_definition_come_back_as_stored(session):
         (None, eligible),
         ("on", unit),
         (None, None),
+    ]
+
+
+def test_definition_candidates_are_eligible_definitions_of_non_noise_entries(session):
+    """Las de entradas `learning` y `known`, también de un contexto truncado:
+    la definición es del sentido, no de la frase. Ni las de `noise` ni las de
+    contextos que no son `eligible`."""
+    repository = PostgresVocabularyRepository(session)
+    user_id = repository.ensure_user()
+
+    def eligible(sense_id: str, definition: str) -> DefinitionDecision:
+        return DefinitionDecision(
+            DefinitionStatus.ELIGIBLE,
+            "oewn:2025",
+            definition=definition,
+            sense_id=sense_id,
+        )
+
+    learning = _entry(
+        "sojourn",
+        EntryStatus.LEARNING,
+        [
+            replace(
+                _context("l1", "sojourned", "They sojourned there."),
+                definition=eligible("sojourn-1", "reside temporarily"),
+            ),
+            replace(
+                _context("l2", "sojourned", "They sojourned on."),
+                definition=DefinitionDecision(DefinitionStatus.POLYSEMOUS, "oewn:2025"),
+            ),
+        ],
+    )
+    known = _entry(
+        "crave",
+        EntryStatus.KNOWN,
+        [
+            replace(
+                _context("k1", "craved", "She craved the", truncated=True),
+                definition=eligible("crave-1", "have an urgent desire for"),
+            )
+        ],
+    )
+    noise = _entry(
+        "the",
+        EntryStatus.NOISE,
+        [
+            replace(
+                _context("n1", "the", "The end.", pos="DET"),
+                definition=eligible("the-1", "a definite article"),
+            )
+        ],
+    )
+    _store(repository, user_id, [learning, known, noise])
+
+    assert repository.list_definition_candidates(user_id) == [
+        DefinitionCandidate(
+            lemma="sojourn",
+            lang="en",
+            pos="VERB",
+            sense_id="sojourn-1",
+            definition="reside temporarily",
+        ),
+        DefinitionCandidate(
+            lemma="crave",
+            lang="en",
+            pos="VERB",
+            sense_id="crave-1",
+            definition="have an urgent desire for",
+        ),
     ]
