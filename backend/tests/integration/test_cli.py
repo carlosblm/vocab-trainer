@@ -1,9 +1,12 @@
 """La CLI de extremo a extremo contra el Postgres de testcontainers.
 
 Prueba lo que solo existe en la raíz de composición: que la configuración llega
-por `DATABASE_URL`, que los adaptadores quedan cableados y que la transacción
-se confirma donde debe. Las reglas del ejercicio y la elección al azar tienen
-sus propios tests unitarios.
+por `DATABASE_URL`, que los adaptadores quedan cableados, que la transacción
+se confirma donde debe y cómo se comporta `study` sin modelo. Las reglas del
+ejercicio y la elección al azar tienen sus propios tests unitarios.
+
+Ningún test usa Ollama de verdad: el de un Ollama inalcanzable apunta a un
+puerto sin servicio.
 """
 
 import re
@@ -20,22 +23,51 @@ from vocab.adapters.postgres.repository import PostgresVocabularyRepository
 from vocab.adapters.postgres.tables import ContextRow, EntryRow, UserRow
 from vocab.cli.main import app
 from vocab.config import get_settings
+from vocab.domain.definition_policy import DefinitionDecision, DefinitionStatus
 from vocab.domain.exercises.cloze_original import BLANK
 from vocab.domain.models import Context, Entry, EntryStatus
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "vocab_fixture.db"
 
+# Lo que configura el modelo y Ollama. Un `.env` de desarrollo lo define, y los
+# módulos de integración que llaman a `load_dotenv` lo dejan en el entorno.
+MODEL_VARIABLES = (
+    "LLM_TASK__DISTRACTORS__PROVIDER",
+    "LLM_TASK__DISTRACTORS__MODEL",
+    "LLM_TASK__DISTRACTORS__PROMPT_VERSION",
+    "LLM_TASK__DISTRACTORS__THINK",
+    "LLM_TASK__DISTRACTORS__TEMPERATURE",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_LOAD_TIMEOUT_SECONDS",
+    "OLLAMA_TIMEOUT_SECONDS",
+)
+# Un puerto sin servicio: la conexión se rechaza al momento.
+UNREACHABLE = "http://127.0.0.1:1"
+
 runner = CliRunner()
 
 
 @pytest.fixture
-def database(engine, monkeypatch):
-    """La CLI lee `DATABASE_URL` como en producción; aquí apunta al contenedor.
+def database(engine, monkeypatch, tmp_path):
+    """La CLI lee la configuración como en producción, con dos cambios.
+
+    - `DATABASE_URL` apunta al contenedor.
+    - Sin modelo: con el `.env` de desarrollo, `study` cargaría el modelo
+      real en Ollama. Sus variables se borran del entorno, y el directorio de
+      trabajo vacío deja fuera los `.env`. El léxico sí hace falta para
+      importar, así que su directorio pasa al entorno antes.
 
     `get_settings` está cacheada, así que se vacía antes y después. La CLI
     confirma con sus propias sesiones, así que las tablas se vacían a mano.
     """
+    get_settings.cache_clear()
+    wn_data_dir = get_settings().wn_data_dir
+    if wn_data_dir is not None:
+        monkeypatch.setenv("WN_DATA_DIR", str(wn_data_dir))
+    for name in MODEL_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("DATABASE_URL", engine.url.render_as_string(hide_password=False))
+    monkeypatch.chdir(tmp_path)
     get_settings.cache_clear()
     yield engine
     get_settings.cache_clear()
@@ -59,9 +91,26 @@ def _only_in_study(engine: Engine, lemma: str) -> None:
         )
 
 
-def _add_known_past_verbs(engine: Engine, *terms: str) -> None:
+def _add_known_past_verbs(
+    engine: Engine, *terms: str, definitions: tuple[str, ...] = ()
+) -> None:
     """Entradas `known` en pasado: con `relied` del fixture, dan a `eased` los
-    tres distractores de la variante de elección."""
+    tres distractores de la variante de elección.
+
+    Con `definitions`, cada una lleva la suya, `eligible`: son las que dan a
+    `rely` los tres distractores de la plantilla.
+    """
+    decisions: list[DefinitionDecision | None] = [None] * len(terms)
+    if definitions:
+        decisions = [
+            DefinitionDecision(
+                DefinitionStatus.ELIGIBLE,
+                "oewn:2025",
+                definition=definition,
+                sense_id=f"{term}-v-1",
+            )
+            for term, definition in zip(terms, definitions, strict=True)
+        ]
     with Session(engine) as session:
         repository = PostgresVocabularyRepository(session)
         user_id = repository.ensure_user()
@@ -82,10 +131,11 @@ def _add_known_past_verbs(engine: Engine, *terms: str) -> None:
                         captured_at=datetime(2026, 1, 1, tzinfo=UTC),
                         pos="VERB",
                         morph="Tense=Past|VerbForm=Fin",
+                        definition=decision,
                     )
                 ],
             )
-            for term in terms
+            for term, decision in zip(terms, decisions, strict=True)
         ]
         repository.upsert_entries(user_id, source_id, entries)
         session.commit()
@@ -179,14 +229,14 @@ def test_study_shows_the_word_and_the_clean_sentence_after_a_miss(database):
 
 
 @pytest.mark.usefixtures("lexicon")
-def test_study_offers_four_options_and_takes_a_number_or_the_word(database):
+def test_study_offers_four_options_and_takes_the_number(database):
     """El orden de las opciones es aleatorio: el test lee cuál es la 1 y
     comprueba que el veredicto le corresponde."""
     runner.invoke(app, ["import", str(FIXTURE)])
     _only_in_study(database, "ease")
     _add_known_past_verbs(database, "tossed", "waned")
 
-    result = runner.invoke(app, ["study"], input="1\neased\n")
+    result = runner.invoke(app, ["study"], input="1\n")
 
     assert result.exit_code == 0, result.output
     assert "Sin opciones" not in result.output
@@ -194,8 +244,24 @@ def test_study_offers_four_options_and_takes_a_number_or_the_word(database):
     options = dict(re.findall(r"^  (\d)\) (\S+)$", first_exercise, re.MULTILINE))
     assert sorted(options.values()) == ["eased", "relied", "tossed", "waned"]
     verdicts = re.findall(r"^(Correcto|Incorrecto)", result.output, re.MULTILINE)
-    first_verdict = "Correcto" if options["1"] == "eased" else "Incorrecto"
-    assert verdicts == [first_verdict, "Correcto"]
+    assert verdicts == ["Correcto" if options["1"] == "eased" else "Incorrecto"]
+
+
+@pytest.mark.usefixtures("lexicon")
+def test_study_asks_again_when_the_answer_is_not_an_option_number(database):
+    """La palabra escrita, una línea vacía o un número fuera del rango no
+    eligen ninguna opción: se vuelve a preguntar, sin contarlos como fallo."""
+    runner.invoke(app, ["import", str(FIXTURE)])
+    _only_in_study(database, "ease")
+    _add_known_past_verbs(database, "tossed", "waned")
+
+    result = runner.invoke(app, ["study"], input="eased\n\n9\n1\n")
+
+    assert result.exit_code == 0, result.output
+    assert result.output.count("Escribe un número del 1 al 4.") == 3
+    assert result.output.count("Elige (1-4)") == 5
+    assert len(re.findall(r"^(Correcto|Incorrecto)", result.output, re.MULTILINE)) == 1
+    assert "de 1 correctas." in result.output
 
 
 @pytest.mark.usefixtures("lexicon")
@@ -230,3 +296,82 @@ def test_study_write_asks_to_type_even_when_there_are_options(database):
     assert ") eased" not in result.output
     assert "Sin opciones" not in result.output
     assert "Correcto." in result.output
+
+
+@pytest.mark.usefixtures("lexicon")
+def test_study_without_a_model_says_so_once_and_uses_the_template(database):
+    """Sin tarea configurada, que es como corren estos tests: un aviso al
+    empezar y los ejercicios de definición con la plantilla, sin repetirlo.
+
+    `rely` es `eligible` en el fixture; las tres definiciones de las entradas
+    `known` le dan la plantilla.
+    """
+    runner.invoke(app, ["import", str(FIXTURE)])
+    _only_in_study(database, "rely")
+    _add_known_past_verbs(
+        database,
+        "craved",
+        "gulped",
+        "levered",
+        definitions=(
+            "have an urgent desire for",
+            "swallow hurriedly or greedily",
+            "move or force with a lever",
+        ),
+    )
+
+    result = runner.invoke(app, ["study"], input="1\n1\n")
+
+    assert result.exit_code == 0, result.output
+    notice = (
+        "Sin modelo: la tarea de distractores no está configurada "
+        "(LLM_TASK__DISTRACTORS__*). Los ejercicios de definición usan la "
+        "plantilla."
+    )
+    assert result.output.count(notice) == 1
+    assert result.output.index(notice) < result.output.index("Elige")
+    assert result.output.count("Definición: ") == 2
+    assert "Distractores de la plantilla" not in result.output
+    assert "de 2 correctas." in result.output
+
+
+@pytest.mark.usefixtures("lexicon")
+def test_failed_warm_up_leaves_the_session_without_model_with_one_notice(
+    database, monkeypatch
+):
+    """Ollama no responde al empezar: un solo aviso, con la URL y el modelo,
+    y la sesión entera con la plantilla, sin volver a intentarlo en cada
+    ejercicio. El modelo es un nombre cualquiera: no se llega a pedir."""
+    runner.invoke(app, ["import", str(FIXTURE)])
+    _only_in_study(database, "rely")
+    _add_known_past_verbs(
+        database,
+        "craved",
+        "gulped",
+        "levered",
+        definitions=(
+            "have an urgent desire for",
+            "swallow hurriedly or greedily",
+            "move or force with a lever",
+        ),
+    )
+    monkeypatch.setenv("LLM_TASK__DISTRACTORS__PROVIDER", "ollama")
+    monkeypatch.setenv("LLM_TASK__DISTRACTORS__MODEL", "some-model:4b")
+    monkeypatch.setenv("LLM_TASK__DISTRACTORS__PROMPT_VERSION", "v1")
+    monkeypatch.setenv("OLLAMA_BASE_URL", UNREACHABLE)
+    get_settings.cache_clear()
+
+    result = runner.invoke(app, ["study"], input="1\n1\n")
+
+    assert result.exit_code == 0, result.output
+    notice = (
+        f"Sin modelo: Ollama en {UNREACHABLE}/api/ps con el modelo "
+        "'some-model:4b': no se pudo conectar"
+    )
+    assert result.output.count(notice) == 1
+    assert result.output.count("Ollama en") == 1
+    assert result.output.index(notice) < result.output.index("Elige")
+    assert "Cargando el modelo" not in result.output
+    assert "Distractores de la plantilla" not in result.output
+    assert result.output.count("Definición: ") == 2
+    assert "de 2 correctas." in result.output

@@ -1,7 +1,8 @@
-"""Prueba la configuración de las tareas con IA (§3.3.4) leída del entorno.
+"""Prueba la configuración de las tareas con IA (§3.3.4) y de Ollama, leída
+del entorno.
 
-Sin `.env`: cada test define sus variables y borra las de tarea que pudiera
-haber cargado otro módulo (los de integración llaman a `load_dotenv`).
+Sin `.env`: cada test define sus variables y borra las de tarea y de Ollama que
+pudiera haber cargado otro módulo (los de integración llaman a `load_dotenv`).
 """
 
 import pytest
@@ -11,12 +12,15 @@ from vocab.config import LLMTaskSettings, Settings
 
 TASK_PREFIX = "LLM_TASK__DISTRACTORS__"
 TASK_FIELDS = ("PROVIDER", "MODEL", "PROMPT_VERSION", "THINK", "TEMPERATURE")
+OLLAMA_TIMEOUTS = ("OLLAMA_LOAD_TIMEOUT_SECONDS", "OLLAMA_TIMEOUT_SECONDS")
 
 
 @pytest.fixture
 def env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     for field in TASK_FIELDS:
         monkeypatch.delenv(TASK_PREFIX + field, raising=False)
+    for name in OLLAMA_TIMEOUTS:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test")
     return monkeypatch
 
@@ -61,3 +65,25 @@ def test_commands_without_ai_load_without_task(env: pytest.MonkeyPatch) -> None:
     """`import` y `study` no usan la tarea: sin sus variables, la
     configuración carga igual."""
     assert _settings().llm_task.distractors is None
+
+
+def test_ollama_has_a_long_timeout_to_load_and_a_short_one_to_generate(
+    env: pytest.MonkeyPatch,
+) -> None:
+    """Los valores por defecto, con las mediciones de D-030 en `Settings`."""
+    settings = _settings()
+
+    assert settings.ollama_load_timeout_seconds == 150
+    assert settings.ollama_timeout_seconds == 15
+
+
+def test_both_ollama_timeouts_are_read_from_the_environment(
+    env: pytest.MonkeyPatch,
+) -> None:
+    env.setenv("OLLAMA_LOAD_TIMEOUT_SECONDS", "240")
+    env.setenv("OLLAMA_TIMEOUT_SECONDS", "20.5")
+
+    settings = _settings()
+
+    assert settings.ollama_load_timeout_seconds == 240
+    assert settings.ollama_timeout_seconds == 20.5

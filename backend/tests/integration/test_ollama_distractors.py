@@ -1,9 +1,11 @@
 """El adaptador de Ollama de verdad, dentro del bucle de generación (§7.3).
 
 Se salta si `OLLAMA_BASE_URL` no está definida o Ollama no responde, como los
-tests que necesitan los vocab.db reales. Hace de raíz de composición mientras
-el generador no esté conectado a la CLI: lee la configuración de la tarea,
-construye el cliente y el adaptador, y llama a `generate_distractors`.
+tests que necesitan los vocab.db reales. Hace de raíz de composición, como
+`study`: lee la configuración de la tarea, construye el cliente y el
+adaptador, precalienta el modelo y llama a `generate_distractors`. Sin
+precalentar, la primera llamada pagaría la carga en frío con el tiempo de
+espera corto de generar.
 
 El modelo no es determinista: solo se comprueba la forma del resultado. Los
 distractores y el historial de intentos se imprimen; `pytest -s` para verlos.
@@ -95,14 +97,17 @@ def generator(task: LLMTaskSettings) -> Iterator[OllamaDistractorGenerator]:
     with httpx.Client(
         base_url=settings.ollama_base_url, timeout=settings.ollama_timeout_seconds
     ) as client:
-        yield OllamaDistractorGenerator(
+        generator = OllamaDistractorGenerator(
             client,
+            load_timeout_seconds=settings.ollama_load_timeout_seconds,
             model=task.model,
             prompt_version=task.prompt_version,
             languages=("en",),
             think=task.think,
             temperature=task.temperature,
         )
+        generator.warm_up(before_loading=lambda: None)
+        yield generator
 
 
 @pytest.mark.parametrize("example", EXAMPLES, ids=lambda example: example.lemma)

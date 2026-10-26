@@ -33,6 +33,11 @@ from vocab.ports.distractor_generator import (
 
 BASE_URL = "http://ollama.test:11434"
 CHAT_URL = f"{BASE_URL}/api/chat"
+RUNNING_URL = f"{BASE_URL}/api/ps"
+# El del cliente, para generar, y el largo, para cargar el modelo: distintos,
+# para que se vea cuál usa cada petición.
+TIMEOUT = 30
+LOAD_TIMEOUT = 150
 # Un nombre cualquiera: el adaptador lo recibe por parámetro, como en la raíz
 # de composición.
 MODEL = "some-model:4b"
@@ -92,18 +97,20 @@ def _generator(
     fake: FakeOllama,
     sleeps: list[float] | None = None,
     *,
+    model: str = MODEL,
     think: bool | None = None,
     temperature: float | None = None,
 ) -> OllamaDistractorGenerator:
     """El adaptador sobre `fake`. Las esperas se anotan en `sleeps` en vez de
     dormir."""
     client = httpx.Client(
-        transport=httpx.MockTransport(fake), base_url=BASE_URL, timeout=30
+        transport=httpx.MockTransport(fake), base_url=BASE_URL, timeout=TIMEOUT
     )
     record = sleeps if sleeps is not None else []
     return OllamaDistractorGenerator(
         client,
-        model=MODEL,
+        load_timeout_seconds=LOAD_TIMEOUT,
+        model=model,
         prompt_version="v1",
         languages=("en",),
         think=think,
@@ -313,7 +320,11 @@ def test_missing_prompt_fails_when_building_the_adapter(
 
     with pytest.raises(ValueError, match="No hay prompt"):
         OllamaDistractorGenerator(
-            client, model=MODEL, prompt_version=version, languages=languages
+            client,
+            load_timeout_seconds=LOAD_TIMEOUT,
+            model=MODEL,
+            prompt_version=version,
+            languages=languages,
         )
 
     assert fake.requests == []
@@ -326,3 +337,118 @@ def test_language_not_loaded_is_a_value_error_without_calling_ollama() -> None:
         _generator(fake).generate(replace(REQUEST, lang="es"))
 
     assert fake.requests == []
+
+
+# Precalentamiento.
+
+
+def _running(*names: str) -> httpx.Response:
+    """Una respuesta de `/api/ps` con esos modelos en memoria, con lo que el
+    adaptador lee y algo que ignora."""
+    return httpx.Response(
+        200,
+        json={
+            "models": [
+                {"name": name, "model": name, "size_vram": 3_128_038_521}
+                for name in names
+            ]
+        },
+    )
+
+
+# Lo que responde `/api/chat` con `messages` vacío: carga sin generar.
+LOADED = httpx.Response(
+    200,
+    json={
+        "model": MODEL,
+        "message": {"role": "assistant", "content": ""},
+        "done": True,
+        "done_reason": "load",
+    },
+)
+
+
+def _read_timeout(request: httpx.Request) -> float:
+    """El tiempo de espera de lectura con el que salió la petición."""
+    timeout: float = request.extensions["timeout"]["read"]
+    return timeout
+
+
+def test_warm_up_does_not_load_a_model_already_in_memory() -> None:
+    fake = FakeOllama(_running("other-model:1b", MODEL))
+    warnings: list[str] = []
+
+    _generator(fake).warm_up(before_loading=lambda: warnings.append("carga"))
+
+    assert [(request.method, str(request.url)) for request in fake.requests] == [
+        ("GET", RUNNING_URL)
+    ]
+    assert warnings == []
+
+
+def test_warm_up_loads_a_missing_model_with_the_long_timeout() -> None:
+    """El aviso sale antes de cargar, no después: es para que se sepa por qué
+    se espera."""
+    fake = FakeOllama(_running("other-model:1b"), LOADED)
+    requests_when_warned: list[int] = []
+
+    _generator(fake).warm_up(
+        before_loading=lambda: requests_when_warned.append(len(fake.requests))
+    )
+
+    asked, loaded = fake.requests
+    assert (asked.method, str(asked.url)) == ("GET", RUNNING_URL)
+    assert (loaded.method, str(loaded.url)) == ("POST", CHAT_URL)
+    assert json.loads(loaded.content) == {"model": MODEL, "messages": []}
+    assert _read_timeout(asked) == TIMEOUT
+    assert _read_timeout(loaded) == LOAD_TIMEOUT
+    assert requests_when_warned == [1]
+
+
+def test_warm_up_takes_a_name_without_tag_as_latest() -> None:
+    """Ollama lista `some-model:latest` para un modelo pedido como
+    `some-model`: es el mismo, y no hay nada que cargar."""
+    fake = FakeOllama(_running("some-model:latest"))
+
+    _generator(fake, model="some-model").warm_up(before_loading=lambda: None)
+
+    assert len(fake.requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "url", "detail"),
+    [
+        # Ollama apagado: ni siquiera responde a la pregunta.
+        ((httpx.ConnectError,), RUNNING_URL, "no se pudo conectar"),
+        # La carga no termina a tiempo, con el tiempo de espera largo.
+        ((_running(), httpx.ReadTimeout), CHAT_URL, f"({LOAD_TIMEOUT} s)"),
+        # El modelo no existe en Ollama: 404 con su error.
+        (
+            (
+                _running(),
+                httpx.Response(404, json={"error": f"model '{MODEL}' not found"}),
+            ),
+            CHAT_URL,
+            "respondió 404: model 'some-model:4b' not found",
+        ),
+        # Quien responde en esa URL no es Ollama.
+        ((httpx.Response(200, json={"status": "ok"}),), RUNNING_URL, "/api/ps"),
+    ],
+    ids=["unreachable", "load_timeout", "model_not_found", "not_ollama"],
+)
+def test_failed_warm_up_is_unavailable_with_url_and_model(
+    outcomes: tuple[httpx.Response | type[httpx.TransportError], ...],
+    url: str,
+    detail: str,
+) -> None:
+    fake = FakeOllama(*outcomes)
+    sleeps: list[float] = []
+
+    with pytest.raises(GeneratorUnavailable) as error:
+        _generator(fake, sleeps).warm_up(before_loading=lambda: None)
+
+    assert url in error.value.reason
+    assert MODEL in error.value.reason
+    assert detail in error.value.reason
+    # Ninguno de estos fallos se reintenta: ver la política de transporte.
+    assert sleeps == []

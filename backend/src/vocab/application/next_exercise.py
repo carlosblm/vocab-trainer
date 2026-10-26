@@ -70,8 +70,10 @@ class ChoiceFallback:
 
 @dataclass(frozen=True)
 class GeneratorNotConfigured:
-    """No hay generador de distractores: su tarea no está configurada. `study`
-    sigue funcionando sin ningún modelo (§2.4), con la plantilla."""
+    """No hay generador de distractores en esta sesión: su tarea no está
+    configurada, o quien construye el generador no pudo dejarlo listo. `study`
+    sigue funcionando sin ningún modelo (§2.4), con la plantilla. Por qué no lo
+    hay es cosa de quien lo construye, que es quien lo sabe."""
 
 
 @dataclass(frozen=True)
@@ -177,8 +179,9 @@ def next_exercise(
     de opción múltiple y no tiene variante de escritura, así que con `--write`
     no se llama al generador.
 
-    `generator` es `None` si la tarea de distractores no está configurada: los
-    contextos `eligible` van entonces a la plantilla, y el resultado lo dice.
+    `generator` es `None` si la sesión va sin modelo, porque la tarea de
+    distractores no está configurada o no se pudo preparar: los contextos
+    `eligible` van entonces a la plantilla, y el resultado lo dice.
 
     `rng` entra por parámetro: la CLI pasa uno sin semilla y los tests uno con
     semilla, así que el resultado de un test es siempre el mismo.

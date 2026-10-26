@@ -68,10 +68,11 @@ class Settings(BaseSettings):
     # Por proveedor, no por tarea: dos tareas con el mismo proveedor comparten
     # servidor (§8.2).
     ollama_base_url: str | None = None
-    ollama_timeout_seconds: float = 150.0
-    """Tiempo de espera de cada petición a Ollama, en segundos. Tiene que
-    cubrir una llamada en frío, porque la carga del modelo cuenta dentro de la
-    petición y el adaptador no reintenta un tiempo agotado.
+    ollama_load_timeout_seconds: float = 150.0
+    """Tiempo de espera para cargar el modelo al empezar la sesión, en
+    segundos: el del precalentamiento (`OllamaDistractorGenerator.warm_up`).
+    El adaptador no reintenta un tiempo agotado, así que tiene que cubrir la
+    peor carga medida.
 
     Medido el 2026-10-07 con `qwen3.5:4b`, Ollama 0.33.3, el prompt `v1` (358
     tokens de entrada), `think=false` y las 34 capas en GPU. Antes de cada
@@ -93,7 +94,21 @@ class Settings(BaseSettings):
     CUDA o las dos.
 
     150 s es algo más del doble de esa llamada, la peor medida, que es una sola
-    muestra. El precio es que un Ollama colgado tarda eso en degradar.
+    muestra. El precio es que un Ollama colgado tarda eso en degradar, ahora
+    una sola vez, al empezar.
+    """
+    ollama_timeout_seconds: float = 15.0
+    """Tiempo de espera de cada generación, en segundos.
+
+    Tras el precalentamiento el modelo está en memoria y una generación tarda
+    medio segundo (Caliente 1 a 3, arriba). Pero Ollama lo descarga a los
+    cinco minutos sin peticiones, y la siguiente paga otra carga en frío, que
+    ya no es la primera tras arrancar: Frío 2 y 3, con 6,579 s y 6,170 s.
+
+    15 s es algo más del doble de la peor de las dos, 6,579 s, como los 150 s
+    lo son de Frío 1: 2,3 veces aquí, 2,1 allí. Con 150 s, un Ollama colgado a
+    mitad de sesión haría esperar dos minutos y medio en cada ejercicio de
+    definición antes de degradar.
     """
 
 

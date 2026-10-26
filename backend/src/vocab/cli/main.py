@@ -8,7 +8,9 @@ conocen los puertos. Por eso los casos de uso se prueban sin base de datos ni
 spaCy ni modelo, y por eso cambiar de adaptador no los toca. El léxico solo lo
 construye `import`: `study` lee la definición ya guardada (D-033). El
 generador solo se construye si su tarea está configurada: sin él, `study`
-funciona igual, con la plantilla (§2.4).
+funciona igual, con la plantilla (§2.4). Su precalentamiento también es de
+aquí: cargar el modelo es cosa del adaptador de Ollama, no del puerto, y solo
+la raíz de composición sabe qué adaptador construyó.
 
 La sesión y el cliente HTTP también se abren y se cierran aquí: quien crea un
 recurso gestiona su ciclo de vida, incluida la transacción.
@@ -53,7 +55,7 @@ from vocab.application.next_exercise import (
 from vocab.config import get_settings
 from vocab.domain.exercises.cloze_original import whole_word
 from vocab.domain.exercises.cloze_original_choice import ClozeOriginalChoice
-from vocab.ports.distractor_generator import DistractorGenerator
+from vocab.ports.distractor_generator import DistractorGenerator, GeneratorUnavailable
 
 app = typer.Typer(
     help="Estudio de vocabulario a partir del vocab.db de Kindle.",
@@ -151,14 +153,18 @@ def study(
     distractores los genera el modelo de LLM_TASK__DISTRACTORS__*, o salen de
     la plantilla si la tarea no está configurada o el modelo no los da. Si no,
     cloze_original: por defecto, elegir la palabra entre cuatro opciones; con
-    --write, escribirla, y entonces todo es cloze_original. Sigue hasta que
-    cierres la entrada (Ctrl+D) o interrumpas (Ctrl+C). No guarda las
-    respuestas: eso llega en F3.
+    --write, escribirla, y entonces todo es cloze_original. En los de
+    elección se responde con el número de la opción. Sigue hasta que cierres
+    la entrada (Ctrl+D) o interrumpas (Ctrl+C). No guarda las respuestas: eso
+    llega en F3.
+
+    Al empezar, si la tarea está configurada, deja el modelo cargado en
+    Ollama. Si no se puede, toda la sesión usa la plantilla, con un aviso.
     """
     rng = random.Random()
     shown = correct = 0
 
-    with _engine() as engine, _distractor_generator() as generator:
+    with _engine() as engine, _distractor_generator(needed=not write) as generator:
         while True:
             # Una sesión por ejercicio, cerrada antes de esperar la respuesta:
             # así no queda una transacción abierta mientras piensas. Sí queda
@@ -195,19 +201,38 @@ def study(
 
 
 @contextmanager
-def _distractor_generator() -> Generator[DistractorGenerator | None]:
-    """El generador de distractores, o `None` si su tarea no está configurada.
+def _distractor_generator(*, needed: bool) -> Generator[DistractorGenerator | None]:
+    """El generador de distractores, con el modelo ya cargado, o `None` si la
+    sesión va sin modelo.
 
-    El cliente HTTP se crea aquí, con la URL y el tiempo de espera de Ollama,
-    y se cierra al terminar, como el motor. Construirlo no conecta: un Ollama
-    apagado se descubre en la primera petición, y degrada con aviso.
+    - Sin `needed` (`--write`), `None` y nada más: esa sesión nunca genera, y
+      precalentar cargaría el modelo para nada.
+    - Sin la tarea configurada, `None`, con un aviso.
+    - Con la tarea, el cliente HTTP se crea aquí, con la URL y el tiempo de
+      espera para generar, y se cierra al terminar, como el motor. Antes del
+      primer ejercicio, `warm_up` deja el modelo cargado, con el tiempo de
+      espera largo, y avisa si tiene que cargarlo. Si falla, toda la sesión
+      sigue sin generador, con un solo aviso al empezar: con él, cada
+      ejercicio de definición volvería a esperar el mismo fallo.
+
+    Sin modelo, el aviso sale aquí, una vez, y no en cada ejercicio de
+    definición (`_ask_definition`).
 
     Los idiomas son el del léxico: solo los contextos con una definición
     suya, los `eligible`, piden distractores (D-033).
     """
+    if not needed:
+        yield None
+        return
     settings = get_settings()
     task = settings.llm_task.distractors
     if task is None:
+        typer.echo(
+            _without_model_notice(
+                "la tarea de distractores no está configurada "
+                "(LLM_TASK__DISTRACTORS__*)"
+            )
+        )
         yield None
         return
     if settings.ollama_base_url is None:
@@ -226,14 +251,29 @@ def _distractor_generator() -> Generator[DistractorGenerator | None]:
     with httpx.Client(
         base_url=settings.ollama_base_url, timeout=settings.ollama_timeout_seconds
     ) as client:
-        yield OllamaDistractorGenerator(
+        generator = OllamaDistractorGenerator(
             client,
+            load_timeout_seconds=settings.ollama_load_timeout_seconds,
             model=task.model,
             prompt_version=task.prompt_version,
             languages=(LEXICON_LANG,),
             think=task.think,
             temperature=task.temperature,
         )
+        try:
+            generator.warm_up(before_loading=lambda: typer.echo("Cargando el modelo…"))
+        except GeneratorUnavailable as error:
+            typer.echo(_without_model_notice(error.reason))
+            yield None
+            return
+        # Fuera del `try`: una `GeneratorUnavailable` durante la sesión no es
+        # del precalentamiento, y la trata cada ejercicio.
+        yield generator
+
+
+def _without_model_notice(reason: str) -> str:
+    """El aviso, al empezar, de una sesión sin modelo."""
+    return f"Sin modelo: {reason}. Los ejercicios de definición usan la plantilla."
 
 
 def _ask_cloze(item: ClozeExercise) -> bool | None:
@@ -246,17 +286,19 @@ def _ask_cloze(item: ClozeExercise) -> bool | None:
     if item.fallback is not None:
         typer.echo(_fallback_notice(item.fallback))
     typer.echo(cloze.masked_sentence)
+
     if isinstance(exercise, ClozeOriginalChoice):
         for number, option in enumerate(exercise.options, start=1):
             typer.echo(f"  {number}) {option}")
-
-    label = "Elige (1-4)" if isinstance(exercise, ClozeOriginalChoice) else "Respuesta"
-    try:
-        response = typer.prompt(label, default="", show_default=False)
-    except typer.Abort:
-        return None
-    if isinstance(exercise, ClozeOriginalChoice):
-        response = _chosen_option(exercise, response)
+        index = _ask_option(len(exercise.options))
+        if index is None:
+            return None
+        response = exercise.options[index]
+    else:
+        try:
+            response = typer.prompt("Respuesta", default="", show_default=False)
+        except typer.Abort:
+            return None
 
     if exercise.is_correct(response):
         typer.echo("Correcto.")
@@ -271,21 +313,23 @@ def _ask_definition(item: DefinitionExercise) -> bool | None:
     responder, acierto o no, muestra la definición correcta. `None` si se
     cerró la entrada."""
     exercise = item.exercise
-    if isinstance(item.source, TemplateDistractors):
-        reason = _degradation_reason(item.source.cause, item.source.attempts)
+    source = item.source
+    # Sin modelo en toda la sesión, el aviso ya salió al empezar.
+    if isinstance(source, TemplateDistractors) and not isinstance(
+        source.cause, GeneratorNotConfigured
+    ):
+        reason = _degradation_reason(source.cause, source.attempts)
         typer.echo(f"Distractores de la plantilla: {reason}.")
     typer.echo(_highlighted(exercise.sentence, exercise.word))
     for number, option in enumerate(exercise.displayed_options, start=1):
         typer.echo(f"  {number}) {option}")
 
-    try:
-        response = typer.prompt("Elige (1-4)", default="", show_default=False)
-    except typer.Abort:
+    chosen = _ask_option(len(exercise.options))
+    if chosen is None:
         return None
 
     answer = exercise.answer_index
-    chosen = _chosen_index(response, len(exercise.options))
-    is_correct = chosen is not None and exercise.is_correct(chosen)
+    is_correct = exercise.is_correct(chosen)
     typer.echo("Correcto." if is_correct else f"Incorrecto. Era la {answer + 1}.")
     typer.echo(f"Definición: {exercise.displayed_options[answer]}")
     return is_correct
@@ -305,22 +349,26 @@ def _quoted(match: re.Match[str]) -> str:
     return f"«{match.group(0)}»"
 
 
-def _chosen_index(response: str, count: int) -> int | None:
-    """La posición, desde 0, de la opción elegida por su número. Cualquier otra
-    respuesta no elige ninguna y cuenta como fallo."""
-    text = response.strip()
-    if text.isdigit() and 1 <= int(text) <= count:
-        return int(text) - 1
-    return None
+def _ask_option(count: int) -> int | None:
+    """La opción elegida, por su posición desde 0, o `None` si se cerró la
+    entrada.
 
-
-def _chosen_option(exercise: ClozeOriginalChoice, response: str) -> str:
-    """El número de una opción la elige; cualquier otra cosa se corrige como
-    si se hubiera escrito."""
-    text = response.strip()
-    if text.isdigit() and 1 <= int(text) <= len(exercise.options):
-        return exercise.options[int(text) - 1]
-    return response
+    Solo vale el número de una opción. Cualquier otra respuesta, también la
+    vacía o la palabra escrita, vuelve a preguntar con un recordatorio, y no
+    cuenta como fallo: es un error al teclear, no una respuesta.
+    """
+    while True:
+        try:
+            response = typer.prompt(
+                f"Elige (1-{count})", default="", show_default=False
+            )
+        except typer.Abort:
+            return None
+        text = response.strip()
+        # `isdecimal` y no `isdigit`: `²` es dígito, e `int` no lo admite.
+        if text.isdecimal() and 1 <= int(text) <= count:
+            return int(text) - 1
+        typer.echo(f"Escribe un número del 1 al {count}.")
 
 
 def _fallback_notice(fallback: ChoiceFallback) -> str:
@@ -371,10 +419,9 @@ def _degradation_reason(cause: DegradationCause, attempts: tuple[Attempt, ...]) 
                 "intentos"
             )
         case GeneratorNotConfigured():
-            return (
-                "la tarea de distractores no está configurada "
-                "(LLM_TASK__DISTRACTORS__*)"
-            )
+            # Por qué no hay modelo lo dijo el aviso del principio: la tarea
+            # no está configurada o el precalentamiento falló.
+            return "la sesión va sin modelo"
         case ExerciseRejected(reason=reason):
             return (
                 "los distractores del modelo pasaron los validadores, pero no "
