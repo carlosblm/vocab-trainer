@@ -31,10 +31,21 @@ class ScriptedDistractorGenerator:
     Una llamada de más es un error del test, no del proveedor, así que no lanza
     ninguna excepción del puerto que quien llama pudiera tratar como un fallo
     normal.
+
+    `model` y `prompt_version` son la identidad que expone el puerto: nombres
+    cualquiera, no de un modelo real (D-007).
     """
 
-    def __init__(self, outcomes: Iterable[Outcome]) -> None:
+    def __init__(
+        self,
+        outcomes: Iterable[Outcome],
+        *,
+        model: str = "scripted",
+        prompt_version: str = "test",
+    ) -> None:
         self._outcomes = deque(outcomes)
+        self.model = model
+        self.prompt_version = prompt_version
         self.requests: list[DistractorRequest] = []
 
     def generate(self, request: DistractorRequest) -> GeneratedDistractors:

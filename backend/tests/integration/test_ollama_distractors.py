@@ -124,8 +124,8 @@ def test_real_model_gives_three_distractors_or_exhausts_retries(
         case Accepted(distractors=generated):
             assert len(generated.distractors) == 3
             assert all(isinstance(text, str) for text in generated.distractors)
-            assert generated.model == task.model
-            assert generated.prompt_version == task.prompt_version
+            assert generator.model == task.model
+            assert generator.prompt_version == task.prompt_version
             assert isinstance(result.attempts[-1], AcceptedAttempt)
         case Degraded(cause=cause):
             # Agotar los reintentos es un resultado posible de un modelo no

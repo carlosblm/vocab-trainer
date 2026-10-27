@@ -170,11 +170,17 @@ class OllamaDistractorGenerator:
         distractors = prompt.parse(
             chat.message.content, truncated=chat.done_reason == "length"
         )
-        return GeneratedDistractors(
-            distractors=distractors,
-            model=self._model,
-            prompt_version=self._prompt_version,
-        )
+        return GeneratedDistractors(distractors=distractors)
+
+    @property
+    def model(self) -> str:
+        """Ver `DistractorGenerator.model`."""
+        return self._model
+
+    @property
+    def prompt_version(self) -> str:
+        """Ver `DistractorGenerator.prompt_version`."""
+        return self._prompt_version
 
     def warm_up(self, *, before_loading: Callable[[], None]) -> None:
         """Deja el modelo cargado en Ollama antes de la primera generación.

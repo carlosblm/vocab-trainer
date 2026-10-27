@@ -26,8 +26,8 @@ from vocab.application.next_exercise import (
     DefinitionExercise,
     DefinitionFallback,
     ExerciseRejected,
-    GeneratorNotConfigured,
     ModelDistractors,
+    NoGenerator,
     TemplateDistractors,
     next_exercise,
 )
@@ -37,10 +37,11 @@ from vocab.domain.exercises.cloze_original import ClozeOriginal
 from vocab.domain.exercises.cloze_original_choice import ClozeOriginalChoice
 from vocab.domain.exercises.definition_template import DefinitionCandidate
 from vocab.domain.exercises.mcq_definition import McqDefinition
-from vocab.domain.models import Context, Entry
+from vocab.domain.models import Context, ContextKey, DefinitionFlag, Entry
 from vocab.ports.distractor_generator import (
     DistractorRequest,
     GeneratedDistractors,
+    GeneratorIdentity,
     GeneratorUnavailable,
     MalformedOutput,
 )
@@ -52,8 +53,9 @@ class FakeRepository:
     """Devuelve las entradas que recibe y anota qué se le pidió.
 
     `candidates` son las entradas de las que salen los distractores de
-    `cloze_original`, y `definitions`, las definiciones de las que sale la
-    plantilla de `mcq_definition`; por defecto, ninguna.
+    `cloze_original`; `definitions`, las definiciones de las que sale la
+    plantilla de `mcq_definition`; y `flags`, las marcas «la definición no
+    encaja». Por defecto, ninguna.
     """
 
     def __init__(
@@ -61,10 +63,12 @@ class FakeRepository:
         entries: list[Entry],
         candidates: list[Entry] | None = None,
         definitions: list[DefinitionCandidate] | None = None,
+        flags: frozenset[DefinitionFlag] = frozenset(),
     ) -> None:
         self._entries = entries
         self._candidates = candidates or []
         self._definitions = definitions or []
+        self._flags = flags
         self.requested_user_ids: list[int] = []
         self.candidate_reads = 0
         self.definition_reads = 0
@@ -83,6 +87,9 @@ class FakeRepository:
     def list_definition_candidates(self, user_id: int) -> list[DefinitionCandidate]:
         self.definition_reads += 1
         return self._definitions
+
+    def list_definition_flags(self, user_id: int) -> frozenset[DefinitionFlag]:
+        return self._flags
 
 
 class InOrder(random.Random):
@@ -375,9 +382,9 @@ FROM_MODEL = GeneratedDistractors(
         "speak in a low and quiet voice",
         "work hard for a long period of time",
     ),
-    model="scripted",
-    prompt_version="test",
 )
+# La identidad del doble del generador, con sus valores por defecto.
+SCRIPTED = GeneratorIdentity("scripted", "test")
 # Las definiciones de las que sale la plantilla: tres, las justas.
 DEFINITIONS = [
     DefinitionCandidate(
@@ -406,7 +413,8 @@ def test_eligible_context_gives_mcq_definition_with_the_model_distractors():
     assert item.exercise == McqDefinition(
         SENTENCE, "sojourned", SOJOURN, (SOJOURN, *FROM_MODEL.distractors)
     )
-    assert item.source == ModelDistractors("scripted", "test", (AcceptedAttempt(),))
+    assert item.source == ModelDistractors(SCRIPTED, (AcceptedAttempt(),))
+    assert (item.entry, item.context) == (SOJOURNED, SOJOURNED.contexts[0])
     # La petición lleva los datos del contexto: su forma, su categoría, su
     # frase y su definición, con el lema y el idioma de la entrada.
     assert generator.requests == [
@@ -442,6 +450,8 @@ def test_eligible_context_gives_mcq_definition_with_the_model_distractors():
 def test_degraded_generation_goes_to_the_template_with_its_cause(
     outcomes, cause, attempts
 ):
+    """Degradó, pero se intentó con un generador: su configuración va en el
+    resultado, para guardarla con el ejercicio."""
     repository = FakeRepository([SOJOURNED], definitions=DEFINITIONS)
 
     item = next_exercise(
@@ -449,7 +459,7 @@ def test_degraded_generation_goes_to_the_template_with_its_cause(
     )
 
     assert isinstance(item, DefinitionExercise)
-    assert item.source == TemplateDistractors(cause, attempts)
+    assert item.source == TemplateDistractors(cause, attempts, SCRIPTED)
     assert item.exercise.definition == SOJOURN
     assert set(item.exercise.distractors) == TEMPLATE
 
@@ -468,7 +478,7 @@ def test_without_template_the_context_goes_to_cloze_original_and_says_why():
     assert item.exercise.cloze == ClozeOriginal(SENTENCE, "sojourned")
     assert item.fallback is None
     assert item.definition_fallback == DefinitionFallback(
-        ProviderUnavailable(UNAVAILABLE), (UnavailableAttempt(UNAVAILABLE),)
+        ProviderUnavailable(UNAVAILABLE), (UnavailableAttempt(UNAVAILABLE),), SCRIPTED
     )
 
 
@@ -499,7 +509,7 @@ def test_without_generator_eligible_context_goes_to_the_template_and_says_so():
     item = next_exercise(repository, None, InOrder(), choice=True)
 
     assert isinstance(item, DefinitionExercise)
-    assert item.source == TemplateDistractors(GeneratorNotConfigured(), attempts=())
+    assert item.source == TemplateDistractors(NoGenerator(), (), generator=None)
     assert set(item.exercise.distractors) == TEMPLATE
 
 
@@ -514,8 +524,6 @@ def test_model_distractors_the_exercise_rejects_go_to_the_template(monkeypatch):
     )
     repeated = GeneratedDistractors(
         distractors=("speak quietly", "Speak quietly.", "work hard"),
-        model="scripted",
-        prompt_version="test",
     )
     repository = FakeRepository([SOJOURNED], definitions=DEFINITIONS)
 
@@ -525,7 +533,9 @@ def test_model_distractors_the_exercise_rejects_go_to_the_template(monkeypatch):
 
     assert isinstance(item, DefinitionExercise)
     assert item.source == TemplateDistractors(
-        ExerciseRejected("hay opciones repetidas", repeated), (AcceptedAttempt(),)
+        ExerciseRejected("hay opciones repetidas", repeated),
+        (AcceptedAttempt(),),
+        SCRIPTED,
     )
     assert set(item.exercise.distractors) == TEMPLATE
 
@@ -538,5 +548,48 @@ def test_writing_variant_never_asks_for_distractors():
 
     item = next_exercise(repository, generator, InOrder(), choice=False)
 
-    assert item == ClozeExercise(ClozeOriginal(SENTENCE, "sojourned"))
+    assert item == ClozeExercise(
+        SOJOURNED, SOJOURNED.contexts[0], ClozeOriginal(SENTENCE, "sojourned")
+    )
     assert generator.requests == []
+
+
+# --- Marca «la definición no encaja»
+
+
+def _flag(sense_id: str) -> DefinitionFlag:
+    return DefinitionFlag(
+        context=ContextKey(lemma="sojourn", lang="en", external_id="s1"),
+        sense_id=sense_id,
+        lexicon="oewn:2025",
+    )
+
+
+def test_context_flagged_with_its_current_sense_gives_cloze_original():
+    """Sin aviso: la marca la puso el usuario, y ya sabe por qué. El doble sin
+    guion falla si se le llama."""
+    repository = FakeRepository(
+        [SOJOURNED], PAST_VERBS, DEFINITIONS, flags=frozenset({_flag("sojourn-v-1")})
+    )
+    generator = ScriptedDistractorGenerator([])
+
+    item = next_exercise(repository, generator, InOrder(), choice=True)
+
+    assert isinstance(item, ClozeExercise)
+    assert isinstance(item.exercise, ClozeOriginalChoice)
+    assert item.definition_fallback is None
+    assert generator.requests == []
+
+
+def test_flag_on_another_sense_does_not_affect_the_context():
+    """La marca es del sentido que se marcó. Si el contexto tiene otro, por
+    otro léxico u otra política (D-034), vuelve a dar `mcq_definition`."""
+    repository = FakeRepository(
+        [SOJOURNED], definitions=DEFINITIONS, flags=frozenset({_flag("sojourn-v-2")})
+    )
+
+    item = next_exercise(
+        repository, ScriptedDistractorGenerator([FROM_MODEL]), InOrder(), choice=True
+    )
+
+    assert isinstance(item, DefinitionExercise)

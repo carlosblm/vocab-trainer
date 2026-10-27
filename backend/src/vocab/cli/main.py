@@ -13,13 +13,15 @@ aquí: cargar el modelo es cosa del adaptador de Ollama, no del puerto, y solo
 la raíz de composición sabe qué adaptador construyó.
 
 La sesión y el cliente HTTP también se abren y se cierran aquí: quien crea un
-recurso gestiona su ciclo de vida, incluida la transacción.
+recurso gestiona su ciclo de vida, incluida la transacción. `study` confirma
+una por ejercicio, al guardarlo antes de mostrarlo, y otra por cada marca.
 """
 
 import random
 import re
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
@@ -35,6 +37,7 @@ from vocab.adapters.lexicon.oewn import LEXICON
 from vocab.adapters.llm import OllamaDistractorGenerator
 from vocab.adapters.nlp.normalizer import normalize
 from vocab.adapters.postgres.repository import PostgresVocabularyRepository
+from vocab.application.flag_definition import flag_definition
 from vocab.application.generate_distractors import (
     Attempt,
     ProviderUnavailable,
@@ -48,10 +51,11 @@ from vocab.application.next_exercise import (
     DefinitionFallback,
     DegradationCause,
     ExerciseRejected,
-    GeneratorNotConfigured,
+    NoGenerator,
     TemplateDistractors,
     next_exercise,
 )
+from vocab.application.record_exercise import record_exercise
 from vocab.config import get_settings
 from vocab.domain.exercises.cloze_original import whole_word
 from vocab.domain.exercises.cloze_original_choice import ClozeOriginalChoice
@@ -155,8 +159,11 @@ def study(
     cloze_original: por defecto, elegir la palabra entre cuatro opciones; con
     --write, escribirla, y entonces todo es cloze_original. En los de
     elección se responde con el número de la opción. Sigue hasta que cierres
-    la entrada (Ctrl+D) o interrumpas (Ctrl+C). No guarda las respuestas: eso
-    llega en F3.
+    la entrada (Ctrl+D) o interrumpas (Ctrl+C).
+
+    Guarda cada ejercicio al mostrarlo, no las respuestas: eso llega en F3.
+    Tras un ejercicio de definición, x marca que la definición no encaja en
+    la frase: ese contexto no volverá a darlo con ese sentido.
 
     Al empezar, si la tarea está configurada, deja el modelo cargado en
     Ollama. Si no se puede, toda la sesión usa la plantilla, con un aviso.
@@ -166,19 +173,18 @@ def study(
 
     with _engine() as engine, _distractor_generator(needed=not write) as generator:
         while True:
-            # Una sesión por ejercicio, cerrada antes de esperar la respuesta:
-            # así no queda una transacción abierta mientras piensas. Sí queda
-            # abierta mientras el modelo genera, porque la plantilla, si hace
-            # falta, se lee después. `study` solo lee y nunca confirma. Lo
-            # único que podría escribir es el usuario que `ensure_user` crea en
-            # una base vacía, y se descarta al cerrar.
+            # Una transacción por ejercicio: elegirlo y guardarlo antes de
+            # mostrarlo, y confirmar. Se cierra antes de esperar la respuesta:
+            # así no queda abierta mientras piensas. Sí lo está mientras el
+            # modelo genera, porque la plantilla, si hace falta, se lee
+            # después. Sin nada que estudiar no se confirma: el usuario que
+            # `ensure_user` crea en una base vacía se descarta al cerrar.
             with Session(engine) as session:
-                item = next_exercise(
-                    PostgresVocabularyRepository(session),
-                    generator,
-                    rng,
-                    choice=not write,
-                )
+                repository = PostgresVocabularyRepository(session)
+                item = next_exercise(repository, generator, rng, choice=not write)
+                if item is not None:
+                    record_exercise(repository, item)
+                    session.commit()
 
             if item is None:
                 typer.echo(
@@ -195,7 +201,22 @@ def study(
             if answered is None:
                 break
             shown += 1
-            correct += answered
+            correct += answered.correct
+            if answered.flagged:
+                assert isinstance(item, DefinitionExercise), (
+                    "solo se marca una definición"
+                )
+                # Su propia transacción: llega después de responder, con la
+                # del ejercicio ya cerrada.
+                with Session(engine) as session:
+                    flag_definition(PostgresVocabularyRepository(session), item)
+                    session.commit()
+                typer.echo(
+                    "Marcada: este contexto ya no dará ejercicio de definición "
+                    "con este sentido."
+                )
+            if answered.closed:
+                break
 
     typer.echo(f"\n{correct} de {shown} correctas.")
 
@@ -276,9 +297,24 @@ def _without_model_notice(reason: str) -> str:
     return f"Sin modelo: {reason}. Los ejercicios de definición usan la plantilla."
 
 
-def _ask_cloze(item: ClozeExercise) -> bool | None:
+@dataclass(frozen=True)
+class _Answered:
+    """Lo que pasó con un ejercicio respondido.
+
+    - `flagged`: tras un ejercicio de definición, se marcó que la definición
+      no encaja.
+    - `closed`: se cerró la entrada después de responder. La respuesta
+      cuenta, y la sesión termina sin mostrar otro ejercicio.
+    """
+
+    correct: bool
+    flagged: bool = False
+    closed: bool = False
+
+
+def _ask_cloze(item: ClozeExercise) -> _Answered | None:
     """Muestra un cloze_original, lee la respuesta y la corrige. `None` si se
-    cerró la entrada."""
+    cerró la entrada sin responder."""
     exercise = item.exercise
     cloze = exercise.cloze if isinstance(exercise, ClozeOriginalChoice) else exercise
     if item.definition_fallback is not None:
@@ -302,21 +338,21 @@ def _ask_cloze(item: ClozeExercise) -> bool | None:
 
     if exercise.is_correct(response):
         typer.echo("Correcto.")
-        return True
+        return _Answered(correct=True)
     typer.echo(f"Incorrecto. La palabra era «{cloze.word}».")
     typer.echo(f"Frase: {cloze.sentence}")
-    return False
+    return _Answered(correct=False)
 
 
-def _ask_definition(item: DefinitionExercise) -> bool | None:
+def _ask_definition(item: DefinitionExercise) -> _Answered | None:
     """Muestra un mcq_definition, lee la opción y la corrige por índice. Tras
-    responder, acierto o no, muestra la definición correcta. `None` si se
-    cerró la entrada."""
+    responder, acierto o no, muestra la definición correcta y pregunta si
+    encaja en la frase. `None` si se cerró la entrada sin responder."""
     exercise = item.exercise
     source = item.source
     # Sin modelo en toda la sesión, el aviso ya salió al empezar.
     if isinstance(source, TemplateDistractors) and not isinstance(
-        source.cause, GeneratorNotConfigured
+        source.cause, NoGenerator
     ):
         reason = _degradation_reason(source.cause, source.attempts)
         typer.echo(f"Distractores de la plantilla: {reason}.")
@@ -332,7 +368,26 @@ def _ask_definition(item: DefinitionExercise) -> bool | None:
     is_correct = exercise.is_correct(chosen)
     typer.echo("Correcto." if is_correct else f"Incorrecto. Era la {answer + 1}.")
     typer.echo(f"Definición: {exercise.displayed_options[answer]}")
-    return is_correct
+    return _ask_fit(is_correct)
+
+
+def _ask_fit(correct: bool) -> _Answered:
+    """Tras ver la definición: Enter sigue, y x la marca como que no encaja en
+    la frase. Cualquier otra cosa vuelve a preguntar: una errata no debe
+    marcar ni dejar de marcar (D-037)."""
+    while True:
+        try:
+            response = typer.prompt(
+                "Enter para seguir, x si la definición no encaja",
+                default="",
+                show_default=False,
+            )
+        except typer.Abort:
+            return _Answered(correct=correct, closed=True)
+        text = response.strip().lower()
+        if text in {"", "x"}:
+            return _Answered(correct=correct, flagged=text == "x")
+        typer.echo("Pulsa Enter para seguir, o escribe x si la definición no encaja.")
 
 
 def _highlighted(sentence: str, word: str) -> str:
@@ -418,7 +473,7 @@ def _degradation_reason(cause: DegradationCause, attempts: tuple[Attempt, ...]) 
                 f"el modelo no dio tres distractores válidos en {len(attempts)} "
                 "intentos"
             )
-        case GeneratorNotConfigured():
+        case NoGenerator():
             # Por qué no hay modelo lo dijo el aviso del principio: la tarea
             # no está configurada o el precalentamiento falló.
             return "la sesión va sin modelo"

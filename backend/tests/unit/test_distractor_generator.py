@@ -39,8 +39,6 @@ def test_scripted_generator_delivers_outcomes_in_order_and_records_requests() ->
             "cook slowly over a low heat",
             "speak in a quiet voice",
         ),
-        model="scripted",
-        prompt_version="test",
     )
     scripted = ScriptedDistractorGenerator(
         [
@@ -53,6 +51,8 @@ def test_scripted_generator_delivers_outcomes_in_order_and_records_requests() ->
     # Python no comprueba un `Protocol` al ejecutar (D-023).
     generator: DistractorGenerator = scripted
 
+    # La identidad se lee del generador, antes de pedirle nada.
+    assert (generator.model, generator.prompt_version) == ("scripted", "test")
     with pytest.raises(GeneratorUnavailable) as unavailable:
         generator.generate(REQUEST)
     assert unavailable.value.reason == "tiempo de espera agotado"

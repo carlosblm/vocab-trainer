@@ -1,12 +1,13 @@
 """Puertos de persistencia: un contrato por caso de uso (D-023).
 
-Importar y estudiar no comparten casi nada, salvo saber quién es el usuario.
-Con un solo contrato, cada doble de prueba tenía que implementar métodos que
-su caso de uso nunca llama, y el problema crecía con cada método nuevo.
+Importar, estudiar, guardar un ejercicio y marcar una definición no comparten
+casi nada, salvo saber quién es el usuario. Con un solo contrato, cada doble de
+prueba tenía que implementar métodos que su caso de uso nunca llama, y el
+problema crecía con cada método nuevo.
 
 La separación no le cuesta nada al adaptador: un `Protocol` se cumple por
 forma, no por herencia, así que el mismo adaptador de Postgres satisface los
-dos sin declararlo. Lo comprueba mypy en la raíz de composición, al pasarlo a
+cuatro sin declararlo. Lo comprueba mypy en la raíz de composición, al pasarlo a
 cada caso de uso.
 """
 
@@ -14,7 +15,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from vocab.domain.exercises.definition_template import DefinitionCandidate
-from vocab.domain.models import Entry
+from vocab.domain.models import DefinitionFlag, Entry
+from vocab.ports.exercise_record import ExerciseRecord
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,12 @@ class StudyRepository(Protocol):
         """
         ...
 
+    def list_definition_flags(self, user_id: int) -> frozenset[DefinitionFlag]:
+        """Las marcas «la definición no encaja» del usuario: cada una, con el
+        contexto y el sentido que se marcó. Decidir si una sigue valiendo para
+        el sentido actual de su contexto es cosa de quien llama."""
+        ...
+
     def list_non_noise_entries(self, user_id: int) -> list[Entry]:
         """Todas las entradas salvo las `noise`, `known` incluidas: de ellas
         salen los distractores de la variante de elección (D-022).
@@ -82,4 +90,31 @@ class StudyRepository(Protocol):
         D-022, y el orden es estable por la misma razón que arriba. Decidir
         cuáles sirven para un ejercicio es cosa de la plantilla.
         """
+        ...
+
+
+class ExerciseRepository(Protocol):
+    """Lo que necesita el registro de ejercicios: guardar cada ejercicio
+    mostrado. Nunca modifica ni borra uno guardado."""
+
+    def ensure_user(self) -> int:
+        """Devuelve el id del usuario único de la v1, creándolo si no existe."""
+        ...
+
+    def save_exercise(self, user_id: int, record: ExerciseRecord) -> int:
+        """Guarda el ejercicio en el contexto de `record.context`, que tiene
+        que existir, y devuelve su id."""
+        ...
+
+
+class DefinitionFlagRepository(Protocol):
+    """Lo que necesita la marca «la definición no encaja»: guardarla."""
+
+    def ensure_user(self) -> int:
+        """Devuelve el id del usuario único de la v1, creándolo si no existe."""
+        ...
+
+    def save_definition_flag(self, user_id: int, flag: DefinitionFlag) -> None:
+        """Guarda la marca. Marcar dos veces el mismo contexto con el mismo
+        sentido no hace nada la segunda vez."""
         ...

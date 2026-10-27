@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Self
 
-from vocab.domain.definition_policy import DefinitionDecision
+from vocab.domain.definition_policy import DefinitionDecision, DefinitionStatus
 from vocab.domain.noise import LookedUpWord, is_noise
 
 
@@ -112,3 +112,55 @@ class Entry:
     @property
     def usable_contexts(self) -> list[Context]:
         return [c for c in self.contexts if c.is_usable]
+
+
+@dataclass(frozen=True)
+class ContextKey:
+    """Qué contexto es, con los datos de la fuente y no con ids de la base: el
+    lema y el idioma de su entrada, que la identifican, y el `external_id` del
+    contexto, único dentro de ella (D-012).
+
+    Es lo que guardan un ejercicio y una marca para apuntar a su contexto.
+    """
+
+    lemma: str
+    lang: str
+    external_id: str
+
+    @classmethod
+    def of(cls, entry: Entry, context: Context) -> Self:
+        lemma, lang = entry.identity
+        return cls(lemma=lemma, lang=lang, external_id=context.external_id)
+
+
+@dataclass(frozen=True)
+class DefinitionFlag:
+    """El usuario marcó que la definición `eligible` de un contexto no encaja en
+    su frase: es el sentido único del léxico, pero no el de esa frase (D-025).
+
+    Vale para el sentido marcado, `sense_id` en `lexicon`. Un contexto marcado
+    deja de dar `mcq_definition` mientras su sentido sea ese; si cambia, porque
+    cambian el léxico o la política (D-034), la marca deja de aplicarse.
+
+    Es dato del usuario, como el progreso: la importación no lo toca (D-012).
+    """
+
+    context: ContextKey
+    sense_id: str
+    lexicon: str
+
+    @classmethod
+    def for_context(cls, entry: Entry, context: Context) -> Self:
+        """La marca del sentido actual del contexto, que tiene que ser
+        `eligible`: sin definición, no hay nada que marcar."""
+        decision = context.definition
+        if decision is None or decision.status is not DefinitionStatus.ELIGIBLE:
+            raise ValueError("solo se marca la definición de un contexto eligible")
+        assert decision.sense_id is not None, (
+            "DefinitionDecision garantiza sentido con eligible"
+        )
+        return cls(
+            context=ContextKey.of(entry, context),
+            sense_id=decision.sense_id,
+            lexicon=decision.lexicon,
+        )

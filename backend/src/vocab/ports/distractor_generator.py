@@ -3,9 +3,10 @@ pero verosímiles, para `mcq_definition`.
 
 Quien llama pide los distractores por este contrato y no sabe qué hay detrás: ni
 el proveedor, ni el modelo, ni el prompt. Los resuelve el adaptador con la
-configuración de la tarea (D-007), y por eso el modelo y la versión de prompt
-vuelven en el resultado: cada ejercicio generado tiene que guardar qué
-configuración lo produjo (§3.3.4, regla 4).
+configuración de la tarea (D-007). El generador expone el modelo y la versión de
+prompt como datos de solo lectura, no en cada resultado: cada ejercicio tiene
+que guardar con qué configuración se intentó (§3.3.4, regla 4), también si la
+generación degradó y no hubo resultado.
 
 Sin nada de terceros. El esquema con el que el adaptador pida al proveedor la
 salida estructurada (D-004) es asunto del adaptador; por esta frontera solo
@@ -82,17 +83,25 @@ class DistractorRequest:
 
 @dataclass(frozen=True)
 class GeneratedDistractors:
-    """Tres distractores y la configuración que los produjo.
+    """Tres distractores.
 
     Una tupla de tres y no una lista: el número es parte del tipo. Un adaptador
     que reciba otra cantidad lanza `MalformedOutput` en vez de devolverla.
 
-    `model` y `prompt_version` son los que resolvió el adaptador desde la
-    configuración de la tarea. Nunca un nombre de modelo escrito en el código
-    (D-007).
+    La configuración que los produjo no viaja aquí, sino en el generador
+    (`DistractorGenerator.model` y `prompt_version`): una sola fuente, que
+    también existe cuando no hay resultado.
     """
 
     distractors: tuple[str, str, str]
+
+
+@dataclass(frozen=True)
+class GeneratorIdentity:
+    """Con qué configuración se pidieron los distractores: el modelo y la
+    versión de prompt de un generador (D-007). Es lo que guarda cada ejercicio
+    que pasó por él, aunque degradara."""
+
     model: str
     prompt_version: str
 
@@ -132,6 +141,19 @@ class MalformedOutput(Exception):
 # espera), así que el adaptador será una clase configurada al construirla.
 class DistractorGenerator(Protocol):
     """Toda generación de distractores implementa esto y nada más."""
+
+    # Propiedades: el contrato es de solo lectura. Un adaptador las cumple con
+    # una propiedad o con un atributo.
+    @property
+    def model(self) -> str:
+        """El modelo que resolvió el adaptador desde la configuración de la
+        tarea. Nunca un nombre de modelo escrito en el código (D-007)."""
+        ...
+
+    @property
+    def prompt_version(self) -> str:
+        """La versión de las plantillas del prompt (D-029)."""
+        ...
 
     def generate(self, request: DistractorRequest) -> GeneratedDistractors:
         """Devuelve tres distractores para la petición, o lanza una de las dos

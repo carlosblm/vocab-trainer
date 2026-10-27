@@ -1,16 +1,59 @@
 """Implementación del repositorio sobre PostgreSQL."""
 
 from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
 from sqlalchemy import ColumnElement, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from vocab.adapters.postgres.tables import ContextRow, EntryRow, SourceRow, UserRow
+from vocab.adapters.postgres.tables import (
+    ContextRow,
+    DefinitionFlagRow,
+    EntryRow,
+    ExerciseRow,
+    SourceRow,
+    UserRow,
+)
 from vocab.domain.definition_policy import DefinitionDecision, DefinitionStatus
+from vocab.domain.distractor_validation import Violation, ViolationCode
+from vocab.domain.exercises.cloze_original import ClozeOriginal
+from vocab.domain.exercises.cloze_original_choice import ClozeOriginalChoice
 from vocab.domain.exercises.definition_template import DefinitionCandidate
-from vocab.domain.models import Context, Entry, EntryStatus
+from vocab.domain.exercises.mcq_definition import McqDefinition
+from vocab.domain.models import (
+    Context,
+    ContextKey,
+    DefinitionFlag,
+    Entry,
+    EntryStatus,
+)
+from vocab.ports.distractor_generator import GeneratorIdentity
+from vocab.ports.exercise_record import (
+    AttemptOutcome,
+    AttemptRecord,
+    DegradationCode,
+    DistractorSource,
+    Exercise,
+    ExerciseKind,
+    ExerciseRecord,
+)
 from vocab.ports.repository import ImportStats
+
+
+@dataclass(frozen=True)
+class StoredExercise:
+    """Un ejercicio leído de la base: su id, su registro y cuándo se guardó.
+
+    Solo lo lee este adaptador: ningún caso de uso lee todavía ejercicios
+    guardados. Los leerán los repasos de F3.
+    """
+
+    id: int
+    record: ExerciseRecord
+    created_at: datetime
 
 
 class PostgresVocabularyRepository:
@@ -167,6 +210,116 @@ class PostgresVocabularyRepository:
             )
         return candidates
 
+    def list_definition_flags(self, user_id: int) -> frozenset[DefinitionFlag]:
+        rows = self._session.execute(
+            select(
+                EntryRow.lemma,
+                EntryRow.lang,
+                ContextRow.external_id,
+                DefinitionFlagRow.sense_id,
+                DefinitionFlagRow.lexicon,
+            )
+            .join(ContextRow, ContextRow.entry_id == EntryRow.id)
+            .join(DefinitionFlagRow, DefinitionFlagRow.context_id == ContextRow.id)
+            .where(EntryRow.user_id == user_id)
+        ).tuples()
+        flags = set()
+        for lemma, lang, external_id, sense_id, lexicon in rows:
+            assert external_id is not None, "todo contexto importado tiene external_id"
+            flags.add(
+                DefinitionFlag(
+                    context=ContextKey(lemma=lemma, lang=lang, external_id=external_id),
+                    sense_id=sense_id,
+                    lexicon=lexicon,
+                )
+            )
+        return frozenset(flags)
+
+    def save_exercise(self, user_id: int, record: ExerciseRecord) -> int:
+        entry_id, context_id = self._context_ids(user_id, record.context)
+        generator = record.generator
+        statement = (
+            insert(ExerciseRow)
+            .values(
+                entry_id=entry_id,
+                context_id=context_id,
+                kind=record.kind.value,
+                lang=record.context.lang,
+                payload=_payload(record.exercise),
+                distractor_source=record.source.value,
+                model=generator.model if generator else None,
+                prompt_version=generator.prompt_version if generator else None,
+                attempts=[_attempt_json(attempt) for attempt in record.attempts],
+                degradation_cause=(
+                    record.degradation.value if record.degradation else None
+                ),
+                degradation_reason=record.degradation_reason,
+            )
+            .returning(ExerciseRow.id)
+        )
+        exercise_id = self._session.scalar(statement)
+        assert exercise_id is not None, "un INSERT sin conflicto devuelve su id"
+        return exercise_id
+
+    def save_definition_flag(self, user_id: int, flag: DefinitionFlag) -> None:
+        _, context_id = self._context_ids(user_id, flag.context)
+        self._session.execute(
+            insert(DefinitionFlagRow)
+            .values(context_id=context_id, sense_id=flag.sense_id, lexicon=flag.lexicon)
+            .on_conflict_do_nothing(
+                index_elements=["context_id", "sense_id", "lexicon"]
+            )
+        )
+
+    def load_exercise(self, exercise_id: int) -> StoredExercise:
+        """El ejercicio guardado con ese id, reconstruido con los tipos del
+        dominio y del puerto: sus invariantes se comprueban también al leer."""
+        row, lemma, lang, external_id = self._session.execute(
+            select(ExerciseRow, EntryRow.lemma, EntryRow.lang, ContextRow.external_id)
+            .join(ContextRow, ContextRow.id == ExerciseRow.context_id)
+            .join(EntryRow, EntryRow.id == ExerciseRow.entry_id)
+            .where(ExerciseRow.id == exercise_id)
+        ).one()
+        assert external_id is not None, "todo contexto importado tiene external_id"
+        generator = (
+            GeneratorIdentity(row.model, row.prompt_version)
+            if row.model is not None and row.prompt_version is not None
+            else None
+        )
+        record = ExerciseRecord(
+            context=ContextKey(lemma=lemma, lang=lang, external_id=external_id),
+            exercise=_exercise_from_payload(ExerciseKind(row.kind), row.payload),
+            source=DistractorSource(row.distractor_source),
+            generator=generator,
+            attempts=tuple(_attempt_from_json(item) for item in row.attempts),
+            degradation=(
+                DegradationCode(row.degradation_cause)
+                if row.degradation_cause is not None
+                else None
+            ),
+            degradation_reason=row.degradation_reason,
+        )
+        return StoredExercise(id=row.id, record=record, created_at=row.created_at)
+
+    def _context_ids(self, user_id: int, key: ContextKey) -> tuple[int, int]:
+        """Los ids de la entrada y del contexto de `key`. Que no exista es un
+        error de quien llama, y `one` lo dice."""
+        entry_id, context_id = (
+            self._session.execute(
+                select(EntryRow.id, ContextRow.id)
+                .join(ContextRow, ContextRow.entry_id == EntryRow.id)
+                .where(
+                    EntryRow.user_id == user_id,
+                    EntryRow.lemma == key.lemma,
+                    EntryRow.lang == key.lang,
+                    ContextRow.external_id == key.external_id,
+                )
+            )
+            .tuples()
+            .one()
+        )
+        return entry_id, context_id
+
     def _load_entries(
         self, user_id: int, status_filter: ColumnElement[bool]
     ) -> list[Entry]:
@@ -261,4 +414,74 @@ def _definition_from_row(row: ContextRow) -> DefinitionDecision | None:
         row.lexicon,
         definition=row.definition,
         sense_id=row.sense_id,
+    )
+
+
+def _payload(exercise: Exercise) -> dict[str, Any]:
+    """Lo que hace falta para reconstruir el ejercicio. La respuesta es el
+    campo del que se reconstruye, no su posición: guardar el índice sería una
+    segunda copia que podría no cuadrar con las opciones."""
+    if isinstance(exercise, McqDefinition):
+        return {
+            "sentence": exercise.sentence,
+            "word": exercise.word,
+            "definition": exercise.definition,
+            "options": list(exercise.options),
+        }
+    if isinstance(exercise, ClozeOriginalChoice):
+        cloze = exercise.cloze
+        options: list[str] | None = list(exercise.options)
+    else:
+        cloze = exercise
+        options = None
+    return {"sentence": cloze.sentence, "word": cloze.word, "options": options}
+
+
+def _exercise_from_payload(kind: ExerciseKind, payload: dict[str, Any]) -> Exercise:
+    """El ejercicio, por su constructor: sus invariantes se comprueban al leer."""
+    if kind is ExerciseKind.MCQ_DEFINITION:
+        return McqDefinition(
+            sentence=payload["sentence"],
+            word=payload["word"],
+            definition=payload["definition"],
+            options=tuple(payload["options"]),
+        )
+    cloze = ClozeOriginal(sentence=payload["sentence"], word=payload["word"])
+    if payload["options"] is None:
+        return cloze
+    return ClozeOriginalChoice(cloze=cloze, options=tuple(payload["options"]))
+
+
+def _attempt_json(attempt: AttemptRecord) -> dict[str, Any]:
+    """El intento con solo los campos que tiene: un `null` de más no dice
+    nada al leerlo en la base."""
+    data: dict[str, Any] = {"outcome": attempt.outcome.value}
+    if attempt.distractors is not None:
+        data["distractors"] = list(attempt.distractors)
+    if attempt.violations:
+        data["violations"] = [
+            {
+                "code": violation.code.value,
+                "distractor_index": violation.distractor_index,
+            }
+            for violation in attempt.violations
+        ]
+    if attempt.reason is not None:
+        data["reason"] = attempt.reason
+    return data
+
+
+def _attempt_from_json(data: dict[str, Any]) -> AttemptRecord:
+    distractors = data.get("distractors")
+    if distractors is not None:
+        first, second, third = distractors
+        distractors = (first, second, third)
+    return AttemptRecord(
+        outcome=AttemptOutcome(data["outcome"]),
+        distractors=distractors,
+        violations=tuple(
+            Violation(ViolationCode(item["code"]), item["distractor_index"])
+            for item in data.get("violations", [])
+        ),
+        reason=data.get("reason"),
     )

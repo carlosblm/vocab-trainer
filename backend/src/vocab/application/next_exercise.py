@@ -1,13 +1,15 @@
 """Caso de uso: obtener el siguiente ejercicio de estudio.
 
 Hasta F3 el selector es el azar, no FSRS: se elige una entrada y, dentro de
-ella, uno de sus contextos utilizables. No se persiste nada: las respuestas y
-el estado de repaso llegan en F3.
+ella, uno de sus contextos utilizables. Este caso de uso solo lee: guardar el
+ejercicio es de `record_exercise`, y las respuestas y el estado de repaso
+llegan en F3.
 
 Qué ejercicio sale lo decide el contexto elegido. Si su definición es
-`eligible` (D-033), `mcq_definition`, con los distractores del modelo o, si la
-generación degrada, de la plantilla (§7.3). Si no, `cloze_original` (D-022).
-Cuándo pasar de opción múltiple a escritura es de F3, con FSRS.
+`eligible` (D-033) y el usuario no la marcó como «no encaja» con ese sentido,
+`mcq_definition`, con los distractores del modelo o, si la generación degrada,
+de la plantilla (§7.3). Si no, `cloze_original` (D-022). Cuándo pasar de
+opción múltiple a escritura es de F3, con FSRS.
 
 El corpus se lee en cada llamada, no una vez por sesión. El caso de uso no
 guarda estado, que es lo que pedirá F3: una API sin estado en el proceso
@@ -41,11 +43,12 @@ from vocab.domain.exercises.cloze_original_choice import (
 from vocab.domain.exercises.definition_template import choose_template_distractors
 from vocab.domain.exercises.distractors import choose_options, eligible_forms
 from vocab.domain.exercises.mcq_definition import McqDefinition
-from vocab.domain.models import Context, Entry
+from vocab.domain.models import Context, DefinitionFlag, Entry
 from vocab.ports.distractor_generator import (
     DistractorGenerator,
     DistractorRequest,
     GeneratedDistractors,
+    GeneratorIdentity,
 )
 from vocab.ports.repository import StudyRepository
 
@@ -69,8 +72,8 @@ class ChoiceFallback:
 
 
 @dataclass(frozen=True)
-class GeneratorNotConfigured:
-    """No hay generador de distractores en esta sesión: su tarea no está
+class NoGenerator:
+    """La sesión va sin generador de distractores: su tarea no está
     configurada, o quien construye el generador no pudo dejarlo listo. `study`
     sigue funcionando sin ningún modelo (§2.4), con la plantilla. Por qué no lo
     hay es cosa de quien lo construye, que es quien lo sabe."""
@@ -84,7 +87,8 @@ class ExerciseRejected:
     No debería ocurrir: los validadores comprueban lo mismo que las
     invariantes del ejercicio. Si ocurre, tienen un hueco, y esto es la
     evidencia: `reason` es el del `ValueError`, y `generated`, lo que devolvió
-    el generador, con el modelo y el prompt que lo produjeron.
+    el generador. Con qué configuración, lo dice el `generator` de
+    `TemplateDistractors`.
     """
 
     reason: str
@@ -95,18 +99,17 @@ class ExerciseRejected:
 # primeras son las de `generate_distractors`; las otras dos, de este caso de
 # uso.
 DegradationCause = (
-    ProviderUnavailable | RetriesExhausted | GeneratorNotConfigured | ExerciseRejected
+    ProviderUnavailable | RetriesExhausted | NoGenerator | ExerciseRejected
 )
 
 
 @dataclass(frozen=True)
 class ModelDistractors:
-    """Los distractores son del modelo (A1): la configuración que los produjo y
-    los intentos que costaron. Es lo que guardará con el ejercicio la
-    persistencia (§3.3.4, regla 4)."""
+    """Los distractores son del modelo (A1): la configuración del generador que
+    los produjo y los intentos que costaron. Es lo que se guarda con el
+    ejercicio (§3.3.4, regla 4)."""
 
-    model: str
-    prompt_version: str
+    generator: GeneratorIdentity
     attempts: tuple[Attempt, ...]
 
 
@@ -117,10 +120,13 @@ class TemplateDistractors:
 
     `attempts` son los intentos del modelo antes de degradar: vacío si no hay
     generador, y con un último `AcceptedAttempt` si fue `ExerciseRejected`.
+    `generator` es la configuración con que se intentó, aunque degradara;
+    `None` solo con `NoGenerator`.
     """
 
     cause: DegradationCause
     attempts: tuple[Attempt, ...]
+    generator: GeneratorIdentity | None
 
 
 @dataclass(frozen=True)
@@ -132,22 +138,30 @@ class DefinitionFallback:
 
     cause: DegradationCause
     attempts: tuple[Attempt, ...]
+    generator: GeneratorIdentity | None
 
 
 @dataclass(frozen=True)
 class DefinitionExercise:
-    """Un `mcq_definition` y de dónde salieron sus distractores."""
+    """Un `mcq_definition`, de dónde salieron sus distractores, y la entrada y
+    el contexto de los que sale: los que necesitan quien lo guarda y quien
+    marca su definición."""
 
+    entry: Entry
+    context: Context
     exercise: McqDefinition
     source: ModelDistractors | TemplateDistractors
 
 
 @dataclass(frozen=True)
 class ClozeExercise:
-    """Un `cloze_original` y, si hubo repliegue, sus motivos: de elección a
-    escritura (`fallback`, D-022) y de `mcq_definition` a `cloze_original`
-    (`definition_fallback`). Pueden darse los dos."""
+    """Un `cloze_original`, la entrada y el contexto de los que sale y, si
+    hubo repliegue, sus motivos: de elección a escritura (`fallback`, D-022) y
+    de `mcq_definition` a `cloze_original` (`definition_fallback`). Pueden
+    darse los dos."""
 
+    entry: Entry
+    context: Context
     exercise: ClozeOriginal | ClozeOriginalChoice
     fallback: ChoiceFallback | None = None
     definition_fallback: DefinitionFallback | None = None
@@ -183,6 +197,10 @@ def next_exercise(
     distractores no está configurada o no se pudo preparar: los contextos
     `eligible` van entonces a la plantilla, y el resultado lo dice.
 
+    Un contexto `eligible` que el usuario marcó con su sentido actual
+    («la definición no encaja») va a `cloze_original`, sin aviso: la marca es
+    suya, y ya sabe por qué.
+
     `rng` entra por parámetro: la CLI pasa uno sin semilla y los tests uno con
     semilla, así que el resultado de un test es siempre el mismo.
 
@@ -201,8 +219,10 @@ def next_exercise(
     """
     user_id = repository.ensure_user()
     entries = repository.list_learning_entries_with_usable_context(user_id)
-    # Los candidatos solo hacen falta para la variante de elección.
+    # Los candidatos y las marcas solo hacen falta para la variante de
+    # elección: la de escritura nunca da `mcq_definition`.
     candidates = repository.list_non_noise_entries(user_id) if choice else []
+    flags = repository.list_definition_flags(user_id) if choice else frozenset()
     for entry in rng.sample(entries, k=len(entries)):
         contexts = entry.usable_contexts
         for context in rng.sample(contexts, k=len(contexts)):
@@ -218,8 +238,8 @@ def next_exercise(
                 )
                 continue
             if not choice:
-                return ClozeExercise(cloze)
-            definition = _eligible_definition(context)
+                return ClozeExercise(entry, context, cloze)
+            definition = _eligible_definition(entry, context, flags)
             if definition is None:
                 return _with_options(cloze, entry, context, candidates, rng)
             outcome = _definition_exercise(
@@ -234,10 +254,15 @@ def next_exercise(
     return None
 
 
-def _eligible_definition(context: Context) -> str | None:
-    """La definición que se puede enseñar, si el contexto es `eligible`."""
+def _eligible_definition(
+    entry: Entry, context: Context, flags: frozenset[DefinitionFlag]
+) -> str | None:
+    """La definición que se puede enseñar, si el contexto es `eligible` y su
+    sentido actual no está marcado. Una marca de otro sentido no cuenta."""
     decision = context.definition
     if decision is None or decision.status is not DefinitionStatus.ELIGIBLE:
+        return None
+    if DefinitionFlag.for_context(entry, context) in flags:
         return None
     return decision.definition
 
@@ -265,7 +290,9 @@ def _definition_exercise(
         entry, context, repository.list_definition_candidates(user_id), rng
     )
     if template is None:
-        return DefinitionFallback(from_model.cause, from_model.attempts)
+        return DefinitionFallback(
+            from_model.cause, from_model.attempts, from_model.generator
+        )
     # Sin red de seguridad, al revés que con los del modelo: la plantilla
     # sale de datos propios y validados, y sobre la exportación de septiembre
     # de 2026 forma ejercicio en los 270 contextos `eligible` de `study`. Un
@@ -273,7 +300,7 @@ def _definition_exercise(
     exercise = McqDefinition.new(
         context.clean_sentence, context.term, definition, template, rng
     )
-    return DefinitionExercise(exercise, from_model)
+    return DefinitionExercise(entry, context, exercise, from_model)
 
 
 def _from_model(
@@ -286,7 +313,10 @@ def _from_model(
     """El ejercicio con los distractores del modelo o, si no los hay, por qué
     tocan los de la plantilla."""
     if generator is None:
-        return TemplateDistractors(GeneratorNotConfigured(), attempts=())
+        return TemplateDistractors(NoGenerator(), attempts=(), generator=None)
+    # Se lee del generador antes de pedirle nada: es la configuración con que
+    # se intenta, salga bien o degrade.
+    identity = GeneratorIdentity(generator.model, generator.prompt_version)
     assert context.pos is not None, "un contexto eligible tiene categoría (D-025)"
     request = DistractorRequest(
         term=context.term,
@@ -301,7 +331,7 @@ def _from_model(
     # sin marcadores) es de configuración y no se captura (D-028).
     result = generate_distractors(request, generator)
     if not isinstance(result, Accepted):
-        return TemplateDistractors(result.cause, result.attempts)
+        return TemplateDistractors(result.cause, result.attempts, identity)
     generated = result.distractors
     try:
         exercise = McqDefinition.new(
@@ -316,11 +346,10 @@ def _from_model(
         # validadores dejaran pasar algo que el ejercicio no admite, la sesión
         # no debe caerse por eso.
         return TemplateDistractors(
-            ExerciseRejected(str(error), generated), result.attempts
+            ExerciseRejected(str(error), generated), result.attempts, identity
         )
     return DefinitionExercise(
-        exercise,
-        ModelDistractors(generated.model, generated.prompt_version, result.attempts),
+        entry, context, exercise, ModelDistractors(identity, result.attempts)
     )
 
 
@@ -334,6 +363,8 @@ def _with_options(
     options = choose_options(entry, context, candidates, rng)
     if options is None:
         return ClozeExercise(
+            entry,
+            context,
             cloze,
             fallback=ChoiceFallback(
                 pos=context.pos,
@@ -342,4 +373,6 @@ def _with_options(
                 needed=OPTION_COUNT - 1,
             ),
         )
-    return ClozeExercise(ClozeOriginalChoice(cloze=cloze, options=options))
+    return ClozeExercise(
+        entry, context, ClozeOriginalChoice(cloze=cloze, options=options)
+    )

@@ -44,9 +44,7 @@ REQUEST = DistractorRequest(
 
 def _generated(*distractors: str) -> GeneratedDistractors:
     first, second, third = distractors
-    return GeneratedDistractors(
-        distractors=(first, second, third), model="scripted", prompt_version="test"
-    )
+    return GeneratedDistractors(distractors=(first, second, third))
 
 
 VALID = _generated("refuse to eat", "cook slowly over a low heat", "speak quietly")

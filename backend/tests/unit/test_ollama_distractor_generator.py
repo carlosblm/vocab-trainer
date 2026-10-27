@@ -126,9 +126,9 @@ def test_success_returns_distractors_with_the_task_configuration() -> None:
 
     result = generator.generate(REQUEST)
 
-    assert result == GeneratedDistractors(
-        distractors=DISTRACTORS, model=MODEL, prompt_version="v1"
-    )
+    assert result == GeneratedDistractors(distractors=DISTRACTORS)
+    # La configuración de la tarea la expone el generador, no el resultado.
+    assert (generator.model, generator.prompt_version) == (MODEL, "v1")
     assert len(fake.requests) == 1
 
 

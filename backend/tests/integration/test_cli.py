@@ -20,7 +20,13 @@ from typer.testing import CliRunner
 
 from vocab.adapters.postgres.base import Base
 from vocab.adapters.postgres.repository import PostgresVocabularyRepository
-from vocab.adapters.postgres.tables import ContextRow, EntryRow, UserRow
+from vocab.adapters.postgres.tables import (
+    ContextRow,
+    DefinitionFlagRow,
+    EntryRow,
+    ExerciseRow,
+    UserRow,
+)
 from vocab.cli.main import app
 from vocab.config import get_settings
 from vocab.domain.definition_policy import DefinitionDecision, DefinitionStatus
@@ -320,7 +326,7 @@ def test_study_without_a_model_says_so_once_and_uses_the_template(database):
         ),
     )
 
-    result = runner.invoke(app, ["study"], input="1\n1\n")
+    result = runner.invoke(app, ["study"], input="1\n\n1\n\n")
 
     assert result.exit_code == 0, result.output
     notice = (
@@ -333,6 +339,8 @@ def test_study_without_a_model_says_so_once_and_uses_the_template(database):
     assert result.output.count("Definición: ") == 2
     assert "Distractores de la plantilla" not in result.output
     assert "de 2 correctas." in result.output
+    # Enter tras la definición sigue sin marcar nada.
+    assert _count(database, DefinitionFlagRow) == 0
 
 
 @pytest.mark.usefixtures("lexicon")
@@ -361,7 +369,7 @@ def test_failed_warm_up_leaves_the_session_without_model_with_one_notice(
     monkeypatch.setenv("OLLAMA_BASE_URL", UNREACHABLE)
     get_settings.cache_clear()
 
-    result = runner.invoke(app, ["study"], input="1\n1\n")
+    result = runner.invoke(app, ["study"], input="1\n\n1\n\n")
 
     assert result.exit_code == 0, result.output
     notice = (
@@ -375,3 +383,46 @@ def test_failed_warm_up_leaves_the_session_without_model_with_one_notice(
     assert "Distractores de la plantilla" not in result.output
     assert result.output.count("Definición: ") == 2
     assert "de 2 correctas." in result.output
+
+
+@pytest.mark.usefixtures("lexicon")
+def test_x_after_a_definition_flags_its_context_and_sense(database):
+    """Tras el primer ejercicio, de definición, x guarda la marca de su
+    contexto con su sentido. Cada ejercicio mostrado queda guardado al
+    mostrarse, también el segundo, que se cierra sin responder.
+
+    Los dos contextos utilizables de `rely` en el fixture tienen formas
+    distintas (`relied`, `rely`): la resaltada dice cuál salió.
+    """
+    runner.invoke(app, ["import", str(FIXTURE)])
+    _only_in_study(database, "rely")
+    _add_known_past_verbs(
+        database,
+        "craved",
+        "gulped",
+        "levered",
+        definitions=(
+            "have an urgent desire for",
+            "swallow hurriedly or greedily",
+            "move or force with a lever",
+        ),
+    )
+
+    result = runner.invoke(app, ["study"], input="1\nx\n")
+
+    assert result.exit_code == 0, result.output
+    assert "Marcada: este contexto ya no dará ejercicio de definición" in result.output
+    with Session(database) as session:
+        flagged = session.execute(
+            select(
+                ContextRow.term, ContextRow.sense_id, DefinitionFlagRow.sense_id
+            ).join(DefinitionFlagRow, DefinitionFlagRow.context_id == ContextRow.id)
+        ).all()
+        kinds = session.scalars(select(ExerciseRow.kind).order_by(ExerciseRow.id)).all()
+    assert len(flagged) == 1
+    term, context_sense, flagged_sense = flagged[0]
+    assert flagged_sense == context_sense
+    first_exercise = result.output.split("Marcada")[0]
+    assert f"«{term}»" in first_exercise
+    assert len(kinds) == 2
+    assert kinds[0] == "mcq_definition"
