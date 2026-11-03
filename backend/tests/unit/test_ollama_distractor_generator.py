@@ -8,6 +8,7 @@ redacción.
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta, timezone
 from string import Template
 from typing import Any
 
@@ -116,6 +117,7 @@ def _generator(
         think=think,
         temperature=temperature,
         sleep=record.append,
+        clock=lambda: NOW,
     )
 
 
@@ -342,18 +344,29 @@ def test_language_not_loaded_is_a_value_error_without_calling_ollama() -> None:
 # Precalentamiento.
 
 
-def _running(*names: str) -> httpx.Response:
+# La hora del reloj del adaptador en los tests. Ollama manda `expires_at` en
+# hora local con desplazamiento y nueve decimales; aquí, con desplazamiento y
+# seis, que es lo que conserva `datetime`.
+NOW = datetime(2026, 11, 3, 18, 32, 14, 343539, tzinfo=UTC)
+# Cinco minutos después, el `keep_alive` por defecto: un modelo cargado.
+KEPT = NOW + timedelta(minutes=5)
+
+
+def _ollama_time(moment: datetime) -> str:
+    """El instante como lo escribe Ollama, en hora local con desplazamiento."""
+    return moment.astimezone(timezone(timedelta(hours=1))).isoformat()
+
+
+def _running(*names: str, expires_at: datetime | None = KEPT) -> httpx.Response:
     """Una respuesta de `/api/ps` con esos modelos en memoria, con lo que el
-    adaptador lee y algo que ignora."""
-    return httpx.Response(
-        200,
-        json={
-            "models": [
-                {"name": name, "model": name, "size_vram": 3_128_038_521}
-                for name in names
-            ]
-        },
-    )
+    adaptador lee y algo que ignora. Con `expires_at = None`, sin el campo."""
+    models: list[dict[str, Any]] = []
+    for name in names:
+        model: dict[str, Any] = {"name": name, "model": name, "size_vram": 1}
+        if expires_at is not None:
+            model["expires_at"] = _ollama_time(expires_at)
+        models.append(model)
+    return httpx.Response(200, json={"models": models})
 
 
 # Lo que responde `/api/chat` con `messages` vacío: carga sin generar.
@@ -403,6 +416,31 @@ def test_warm_up_loads_a_missing_model_with_the_long_timeout() -> None:
     assert _read_timeout(asked) == TIMEOUT
     assert _read_timeout(loaded) == LOAD_TIMEOUT
     assert requests_when_warned == [1]
+
+
+@pytest.mark.parametrize(
+    "expires_at",
+    [NOW - timedelta(seconds=1), None],
+    ids=["stopping", "without_expiry"],
+)
+def test_warm_up_loads_a_model_ollama_is_unloading(expires_at: datetime | None) -> None:
+    """`/api/ps` lo lista, pero con `expires_at` ya pasado: Ollama lo está
+    descargando, y `ollama ps` lo muestra como «Stopping...». Se avisa y se
+    pide la carga, con el tiempo de espera largo, como si no estuviera. Sin
+    `expires_at`, igual: ante la duda, no cargado.
+
+    Que Ollama lo deje cargado no se prueba aquí: ver el límite conocido del
+    adaptador."""
+    fake = FakeOllama(_running(MODEL, expires_at=expires_at), LOADED)
+    warnings: list[str] = []
+
+    _generator(fake).warm_up(before_loading=lambda: warnings.append("carga"))
+
+    asked, loaded = fake.requests
+    assert str(asked.url) == RUNNING_URL
+    assert (loaded.method, str(loaded.url)) == ("POST", CHAT_URL)
+    assert _read_timeout(loaded) == LOAD_TIMEOUT
+    assert warnings == ["carga"]
 
 
 def test_warm_up_takes_a_name_without_tag_as_latest() -> None:

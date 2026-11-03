@@ -35,6 +35,25 @@ Pregunta a `/api/ps` si el modelo está en memoria y, si no, lo carga con
 `load`). Comprobado contra Ollama 0.33.3 el 2026-10-26: la carga tardó 9,92 s
 y, ya cargado, la misma llamada vuelve al momento.
 
+Un modelo que `/api/ps` lista con `expires_at` ya pasado no cuenta como
+cargado: Ollama lo está descargando, y `ollama ps` lo muestra como
+«Stopping...» (la CLI compara `expires_at` con la hora actual). Al pararlo,
+Ollama pone `expires_at` en ese momento, y el modelo sigue en la lista hasta
+que terminan las peticiones en curso. Reproducido contra Ollama 0.33.3 el
+2026-11-03: tras `ollama stop` con una generación en marcha, `/api/ps` siguió
+listándolo con la hora de la parada durante toda la generación.
+
+Ante la duda, no cargado: si se carga uno que ya estaba, la llamada vuelve al
+momento y solo sobra el aviso de carga. Por eso tampoco cuenta como cargado
+un modelo sin `expires_at`.
+
+**Límite conocido**: pedir la carga de un modelo que se está descargando no lo
+deja cargado. Medido ese mismo día: Ollama la atiende con el proceso que está
+descargando (200 y `done_reason` = `load` en 0,05 s), y al terminar la
+generación en curso lo descarga igual. La primera generación paga entonces la
+recarga, con el tiempo de espera corto. Lo arreglaría esperar a que el modelo
+desaparezca de `/api/ps` antes de cargarlo; de momento se deja así.
+
 **Dos tiempos de espera.** La carga usa el largo (`load_timeout_seconds`),
 porque la primera tras arrancar Ollama es la más lenta medida. Generar usa el
 del cliente, que es corto: solo tiene que cubrir una carga que no sea la
@@ -51,6 +70,7 @@ existen.
 
 import time
 from collections.abc import Callable, Iterable
+from datetime import UTC, datetime
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -101,11 +121,13 @@ class _ChatResponse(BaseModel):
 class _RunningModel(BaseModel):
     name: str
     model: str
+    # Con zona horaria, como la manda Ollama. `None` si no viene.
+    expires_at: datetime | None = None
 
 
 class _RunningModels(BaseModel):
-    """Lo que se lee de `/api/ps`. El resto (tamaño, memoria de GPU,
-    caducidad) se ignora."""
+    """Lo que se lee de `/api/ps`. El resto (tamaño, memoria de GPU) se
+    ignora."""
 
     models: list[_RunningModel]
 
@@ -127,6 +149,9 @@ class OllamaDistractorGenerator:
       construir, no en la primera llamada.
     - `sleep` es la espera antes del reintento por 5xx; los tests la
       sustituyen para no esperar.
+    - `clock` da la hora con la que se compara `expires_at` de `/api/ps`. Es
+      la de esta máquina, que es la de Ollama: la política supone un Ollama
+      local. Los tests la fijan.
     """
 
     def __init__(
@@ -140,6 +165,7 @@ class OllamaDistractorGenerator:
         think: bool | None = None,
         temperature: float | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._client = client
         self._load_timeout = load_timeout_seconds
@@ -148,6 +174,7 @@ class OllamaDistractorGenerator:
         self._think = think
         self._temperature = temperature
         self._sleep = sleep
+        self._clock = clock
         self._prompts = {lang: load_prompt(lang, prompt_version) for lang in languages}
         if not self._prompts:
             raise ValueError("Hace falta al menos un idioma.")
@@ -205,7 +232,9 @@ class OllamaDistractorGenerator:
         )
 
     def _is_loaded(self) -> bool:
-        """Si `/api/ps` lista el modelo, comparando con la etiqueta explícita:
+        """Si `/api/ps` lista el modelo y no lo está descargando: su
+        `expires_at` todavía no ha pasado (ver «Precalentamiento» en el
+        módulo). El nombre se compara con la etiqueta explícita:
         `some-model` y `some-model:latest` son el mismo."""
         response = self._send(
             "GET", RUNNING_MODELS_PATH, body=None, timeout=self._client.timeout
@@ -219,8 +248,11 @@ class OllamaDistractorGenerator:
             )
             raise GeneratorUnavailable(reason) from error
         wanted = _tagged(self._model)
+        now = self._clock()
         return any(
             wanted in (_tagged(model.name), _tagged(model.model))
+            and model.expires_at is not None
+            and model.expires_at > now
             for model in running.models
         )
 
