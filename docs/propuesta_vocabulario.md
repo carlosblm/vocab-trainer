@@ -1,7 +1,7 @@
 # Propuesta técnica — Aplicación de estudio de vocabulario
 
 **Documento de contexto del proyecto**
-Autor: Carlos Blázquez Martín · Versión 1.11 · Octubre 2026
+Autor: Carlos Blázquez Martín · Versión 1.12 · Noviembre 2026
 
 ---
 
@@ -199,7 +199,7 @@ Cada tarea tiene su propio puerto (en F1, `DistractorGenerator`), y lo llama la 
 1. **Ningún nombre de modelo en el código.** Si aparece `qwen3.5:4b` en un `.py`, el desacoplamiento ha fallado.
 2. **Los parámetros específicos de proveedor viven en la configuración de la tarea**, no en la lógica. `think`, temperatura y `num_predict` son configuración. Un `think=False` escrito en el código acopla la aplicación a Qwen3.5.
 3. **Los prompts fuera del código**, en archivos versionados indexados por `(tarea, idioma, versión)`. Cambiar un prompt no debe ser un commit de código. Esto ya era necesario para el desacoplamiento por idioma (§3.3.1); aquí se refuerza.
-4. **Cada ejercicio generado registra qué configuración lo produjo.** La tabla `exercises` ya guarda `generator`, `model` y `prompt_version` (§4.3). Sin eso, comparar configuraciones es imposible.
+4. **Cada ejercicio generado registra qué configuración lo produjo.** La tabla `exercises` guarda `distractor_source`, `model` y `prompt_version` (§4.3), y el generador expone su identidad (D-038). Sin eso, comparar configuraciones es imposible.
 
 **Consecuencia sobre la evaluación.** Si las configuraciones son intercambiables, el arnés (§6) debe poder ejecutar el mismo conjunto de casos bajo varias y comparar los resultados. Eso convierte el desacoplamiento en algo medible en lugar de teórico, y hace que la comparativa local frente a API de la F6 sea una ejecución más del arnés en vez de un trabajo aparte.
 
@@ -270,7 +270,10 @@ contexts  (id, entry_id, external_id, term, raw_sentence, clean_sentence,
            sense_id, lexicon, book_title, book_lang, captured_at)
           UNIQUE (entry_id, external_id)
 exercises        (id, entry_id, context_id, kind, lang, payload,
-                  generator, model, prompt_version, validation_report, created_at)
+                  distractor_source, model, prompt_version, attempts,
+                  degradation_cause, degradation_reason, created_at)
+definition_flags (id, context_id, sense_id, lexicon, flagged_at)
+                 UNIQUE (context_id, sense_id, lexicon)
 reviews          (id, entry_id, exercise_id, rating, answered_at)
 scheduling_state (entry_id, stability, difficulty, due_at, reps, lapses)
 eval_runs        (id, dataset_version, model, prompt_version, metrics, created_at)
@@ -287,7 +290,7 @@ Notas de diseño:
 - `contexts.particle` guarda la partícula de R1 (D-008, D-032).
 - `contexts.definition_status` es el estado que decidió la política de D-025 al importar; vacío (`NULL`) significa «no evaluado». `definition` y `sense_id` solo van con `eligible`, y `lexicon` dice qué léxico produjo el estado (D-033).
 - `external_id` guarda el identificador de la fuente (`en:resilient`, `LOOKUPS.id`). Es lo que hace idempotente la reimportación (D-012).
-- La ingesta no escribe nunca en `reviews` ni en `scheduling_state`. El progreso del usuario vive en tablas que la importación no toca, y esa separación es lo que hace segura la reimportación.
+- La ingesta no escribe nunca en `reviews`, `scheduling_state` ni `definition_flags`. El progreso del usuario vive en tablas que la importación no toca, y esa separación es lo que hace segura la reimportación.
 
 ---
 
@@ -533,7 +536,7 @@ Ritmo asumido: 10–20 h semanales, en paralelo a la búsqueda activa de empleo.
 | Fase | Semanas | Entregable | Material de entrevista que desbloquea |
 |---|---|---|---|
 | **F0 · Cimientos** | 1 (real: del 7 de septiembre al 1 de octubre de 2026) | Ingesta a Postgres, normalización con spaCy, limpieza, recorte de frases. `compose` completo. CLI que muestra `cloze_original`. | Ingesta y calidad de datos sobre datos reales y sucios. |
-| **F1 · Primera IA** | 2–3 | Generación de distractores (A1) con salida Pydantic en el adaptador, validadores básico, D1 y D7 (D-027), bucle de reintento y degradación. Sigue siendo CLI. | Salidas estructuradas, validación, reintento con feedback, diseño de la degradación. |
+| **F1 · Primera IA** | 2–3 (real: del 5 de octubre al 3 de noviembre de 2026, con parones del 10 al 25 de octubre y del 28 de octubre al 2 de noviembre) | Generación de distractores (A1) con salida Pydantic en el adaptador, validadores básico, D1 y D7 (D-027), bucle de reintento y degradación. Sigue siendo CLI. | Salidas estructuradas, validación, reintento con feedback, diseño de la degradación. |
 | **F2 · Medición** | 3–4 | Langfuse integrado. Arnés de evaluación con 100 casos y métricas deterministas. Informe versionado. Comparación de métodos de desambiguación de sentidos, con su etiquetado de referencia (D-034). | Evaluación de LLMs, coste y latencia por petición, metodología propia. **El diferenciador.** |
 | **F3 · Producto** | 4–5 | API FastAPI, interfaz Angular mínima, FSRS conectado. **La aplicación pasa a ser usable a diario.** | Sistema completo de extremo a extremo. |
 | **F4 · Segunda IA** | 5–6 | Frases nuevas de práctica (A2) y juez semántico (A3, métricas J1–J3). Acuerdo del juez con etiquetado humano. | Generación anclada a contexto, LLM como juez y sus límites. |
@@ -579,7 +582,7 @@ Ritmo asumido: 10–20 h semanales, en paralelo a la búsqueda activa de empleo.
 
 1. ~~¿Cuánta VRAM tiene la RTX 4070?~~ **Resuelto (§12.1)**: 8.188 MiB totales, ~6,9 GiB disponibles. Descarta modelos de más de 9B.
 2. **¿Hay cuenta o crédito de Azure disponible?** Si no, conviene decidir el destino de despliegue ahora, porque afecta al `compose` y a la configuración.
-3. **¿Qué presupuesto hay para llamadas a API** en la fase de comparativa (F6)? Determina el tamaño del conjunto de evaluación y el número de configuraciones comparables.
+3. **¿Qué presupuesto hay para llamadas a API** en la fase de comparativa (F6)? Determina el tamaño del conjunto de evaluación y el número de configuraciones comparables. También afecta a F2, para Jev y para el etiquetado de referencia con modelos grandes (D-034).
 4. ~~¿Se contempla realmente la comercialización?~~ **Resuelto (D-025)**: por ahora no se contempla.
 
 ### Preguntas que pueden resolverse durante el desarrollo

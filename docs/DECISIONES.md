@@ -51,6 +51,7 @@ Este archivo es el material de entrevista del proyecto. Cuando pregunten "¿por 
 | D-035 | 2026-10-26 | F1 | `mcq_definition` y plantilla de degradación |
 | D-036 | 2026-10-26 | F1 | `study` con `mcq_definition` |
 | D-037 | 2026-10-26 | F1 | Precalentamiento de Ollama y dos tiempos de espera |
+| D-038 | 2026-10-27 | F1 | Guardar los ejercicios y la marca «la definición no encaja» |
 
 ---
 
@@ -191,6 +192,8 @@ Es un fallo silencioso. La respuesta parece correcta a nivel de HTTP y rompería
 **Dependencia**: este desacoplamiento carece de valor sin el arnés de evaluación de la F2. Sin él, permitiría cambiar de modelo a ciegas, que es peor que no poder cambiarlo.
 
 **Actualización (2026-10-06)**: el `llm.run` genérico se sustituyó por un puerto por tarea (D-026). Quien llama es `application/`, y el modelo de cada tarea se resuelve en la raíz de composición. Las cuatro reglas siguen vigentes.
+
+**Actualización (2026-10-27)**: la regla 4 está implementada; cada ejercicio guarda `model` y `prompt_version`, también al degradar (D-038).
 
 ---
 
@@ -460,6 +463,10 @@ en palabras vueltas a consultar. Es la fecha de la **última** consulta, no
 de la primera. Por tanto `entries.first_seen_at` se deriva de
 `MIN(LOOKUPS.timestamp)`, nunca de `WORDS.timestamp`.
 
+**Actualización (2026-10-27)**: el progreso del usuario vive en
+`scheduling_state`, `reviews` y `definition_flags`, y la importación no toca
+ninguna de las tres (D-038).
+
 
 ---
 
@@ -656,6 +663,9 @@ partícula de R1 (`NormalizedWord.particle`).
 **Revisión**: el contrato tiene una sola implementación, así que su capacidad
 real de abstraer está sin verificar. El primer examen llega con un segundo
 normalizador: el español en F7, o cualquier sustituto de spaCy.
+
+**Actualización (2026-10-27)**: ahora son ocho puertos, con
+`ExerciseRepository` y `DefinitionFlagRepository` (D-038).
 
 ---
 
@@ -1067,6 +1077,10 @@ vez: una regla que solo se comprueba si alguien se acuerda no está comprobada.
 
 **Coste**: dos contratos en vez de uno y `ensure_user` declarado dos veces.
 
+**Actualización (2026-10-27)**: ahora son cuatro contratos de repositorio:
+`ImportRepository`, `StudyRepository`, `ExerciseRepository` y
+`DefinitionFlagRepository` (D-038).
+
 ---
 
 ## D-024 · Ollama se ejecuta fuera de compose
@@ -1197,6 +1211,11 @@ resuelto (D-031).
 de `chewed up`, en que un único sentido en el léxico no es el del contexto
 (D-036).
 
+**Actualización (2026-10-27)**: `towner` es un tercer caso, después de
+`chewed up` y «paved the way», en que un único sentido en el léxico no es el
+del contexto, esta vez por una palabra compuesta con guion. Para los casos
+sueltos está la marca (D-038).
+
 ---
 
 ## D-026 · Un puerto por tarea de IA, no un `run` genérico
@@ -1231,6 +1250,9 @@ con el motivo). El modelo de cada tarea se elige en la raíz de composición.
 asignación tipada.
 
 **Revisión**: en F4, con las otras dos tareas.
+
+**Actualización (2026-10-27)**: `model` y `prompt_version` los expone el
+generador; el resultado solo lleva los distractores (D-038).
 
 ---
 
@@ -1788,6 +1810,89 @@ Cuando las respuestas alimenten el repaso (F3), una errata no debe contar como
 error.
 
 **Revisión**: si aparecen tiempos agotados en el uso.
+
+**Actualización (2026-11-03)**:
+
+- «Stopping...» se detecta porque `expires_at` ya ha pasado. Lo dice el código
+  de la CLI de Ollama (v0.33.3, `cmd/cmd.go`) y se reprodujo contra el
+  servidor. Un modelo sin `expires_at` cuenta como no cargado.
+- Límite conocido: pedir la carga mientras Ollama descarga el modelo devuelve
+  200 con `done_reason: load` en 0,05 s y no lo deja cargado. Cuando ya no
+  está en `/api/ps`, la carga tardó 5,38 s y quedó cargado.
+- **Descartado**: consultar `/api/ps` hasta que el modelo desaparezca y
+  cargarlo entonces, porque añadía un bucle con plazos y tests de tiempo para
+  un caso raro cuyo peor efecto es que el primer ejercicio use la plantilla.
+
+---
+
+## D-038 · Guardar los ejercicios y la marca «la definición no encaja»
+
+**Fecha**: 2026-10-27 · **Fase**: F1
+
+**Decisión**: una fila en `exercises` por cada ejercicio mostrado, y una marca
+del usuario cuando la definición `eligible` no encaja en su frase.
+
+**Ejercicios**:
+
+- Entrada, contexto, tipo e idioma.
+- `payload` (JSONB): la frase, la palabra, las opciones en su orden, y la
+  respuesta como el campo del que se reconstruye.
+- `distractor_source`: `model`, `template` o `none`.
+- `model` y `prompt_version`, solo si se le pidió algo al generador, también
+  al degradar.
+- `attempts` (JSONB): el resultado de cada intento, con sus códigos.
+- `degradation_cause` y `degradation_reason`.
+
+Los valores guardados se escriben a mano. CHECK de conjuntos de valores, del
+tipo con la procedencia y del modelo con su versión de prompt. Migración con
+downgrade, y el esquema de Alembic coincide con las tablas.
+
+**Identidad del generador**: `DistractorGenerator` expone `model` y
+`prompt_version` como datos de solo lectura, y `GeneratedDistractors` solo
+lleva los distractores. Así los fallos quedan atribuidos, y en F2 se podrá
+medir la degradación por configuración (O3).
+
+`GeneratorNotConfigured` pasa a llamarse `NoGenerator`: significa «sesión sin
+generador», ya sea porque la tarea no está configurada o porque el
+precalentamiento falló, y su valor se guarda.
+
+**Marca**:
+
+- Tabla `definition_flags` (contexto, `sense_id`, `lexicon` y fecha), con
+  `UNIQUE (contexto, sense_id, lexicon)`.
+- Un contexto marcado con su sentido actual pasa a `cloze_original`.
+- La marca va unida al sentido: si en F2 la desambiguación elige otro, la
+  marca no lo bloquea.
+- Es dato del usuario y la importación no la toca (D-012).
+- Una definición marcada sigue sirviendo como distractor de otras palabras,
+  porque es una glosa válida de su sentido.
+- En la CLI, tras una opción múltiple, Enter sigue y «x» + Enter marca.
+
+**Casos de uso**: tres, con tres contratos (D-023): `next_exercise`, de solo
+lectura; `record_exercise`; y `flag_definition`. Una transacción para elegir y
+guardar, y otra para la marca. Un contexto se identifica con datos de la
+fuente (lema, idioma, `external_id`), no con ids de la base.
+
+**Descartado**:
+
+- Que el modelo y la versión del prompt llegaran solo con una respuesta
+  correcta: dejaba los fallos sin atribuir.
+- Una marca unida solo al contexto: bloquearía un sentido nuevo tras la
+  desambiguación.
+- Una regla para palabras con guion: son como mucho 9 contextos (D-019), y la
+  marca cubre los casos sueltos. Se reconsidera si aparecen más.
+
+**La marca de `giggling`** que hizo el agente en la base local se borró: era
+una etiqueta falsa en datos que en F2 servirán de etiquetas humanas.
+
+**Observado** en una sesión real, sin medición formal:
+
+- `towner` (de *out-of-towner*) era `eligible` con la definición «a resident
+  of a town or city», lo contrario de lo que dice la frase.
+- En `somberly`, la definición correcta, «in a somber manner», contiene la raíz
+  de la palabra y delata la respuesta; ningún validador lo comprueba
+  (candidato a métrica en F2).
+- En `barge`, un distractor casi repite la correcta (J1).
 
 ---
 
