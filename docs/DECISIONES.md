@@ -52,6 +52,8 @@ Este archivo es el material de entrevista del proyecto. Cuando pregunten "¿por 
 | D-036 | 2026-10-26 | F1 | `study` con `mcq_definition` |
 | D-037 | 2026-10-26 | F1 | Precalentamiento de Ollama y dos tiempos de espera |
 | D-038 | 2026-10-27 | F1 | Guardar los ejercicios y la marca «la definición no encaja» |
+| D-039 | 2026-11-04 | F2 | F2 se divide en F2a y F2b, y se reasignan los pendientes heredados |
+| D-040 | 2026-11-04 | F2 | El juez empieza con el modelo local, y pasa a una API solo si no llega |
 
 ---
 
@@ -94,6 +96,8 @@ Mismo tamaño en disco, generación más reciente, y es el único de los dos que
 
 **Revisión**: en la F2, comparar contra Phi-4-mini con el arnés de evaluación. La hipótesis es que un modelo más pequeño y predecible puede ser más fiable en salida estructurada que uno mayor y más creativo. Sin comprobar.
 
+**Actualización (2026-11-04)**: la comparación con Phi-4-mini pasa a F6 (D-039).
+
 ---
 
 ## D-003 · Razonamiento desactivado en la generación
@@ -116,6 +120,8 @@ Con Qwen3-4B la diferencia era aún mayor: 2.503 tokens y 44,5 s. El 97 % de los
 **Impacto en el proyecto**: una vuelta del arnés de evaluación con 100 casos pasa de unos 51 minutos a unos 2. Es el factor que más determina cuántas veces se puede iterar sobre un prompt.
 
 **Pendiente de revisar en la F2**: medir si el razonamiento mejora el **juez semántico** (métricas J1–J3). Hipótesis: el razonamiento ayuda a quien juzga, no a quien genera, porque juzgar es una comparación en varios pasos y generar una definición no lo es. **No comprobado.**
+
+**Actualización (2026-11-04)**: se mide en F2a, con el juez como métrica del arnés en J1–J2; J3 llega con A2 en F4 (D-039, D-040).
 
 ---
 
@@ -1312,6 +1318,8 @@ formal (D-036):
 - La paráfrasis en `forfeit`.
 - Los antónimos en `hotly`.
 
+**Actualización (2026-11-04)**: J1 y J2 llegan en F2a, como métricas del arnés (D-039).
+
 ---
 
 ## D-028 · Bucle de generación: el motivo del reintento viaja como datos
@@ -1695,6 +1703,8 @@ Nimble, Laya y los modelos de desambiguación.
 
 **Revisión**: al cerrar F2, con los números.
 
+**Actualización (2026-11-04)**: los métodos pasan a cuatro (primera acepción, Lesk, embeddings y Qwen3.5 local), y el selector con API pasa a F6 (D-039).
+
 ---
 
 ## D-035 · `mcq_definition` y plantilla de degradación
@@ -1893,6 +1903,118 @@ una etiqueta falsa en datos que en F2 servirán de etiquetas humanas.
   de la palabra y delata la respuesta; ningún validador lo comprueba
   (candidato a métrica en F2).
 - En `barge`, un distractor casi repite la correcta (J1).
+
+---
+
+## D-039 · F2 se divide en F2a y F2b, y se reasignan los pendientes heredados
+
+**Fecha**: 2026-11-04 · **Fase**: F2
+
+**Decisión**:
+
+- **F2a · Arnés**: conjunto de evaluación de A1; arnés con métricas deterministas
+  y operativas (O1–O3); el juez con J1–J2, como métrica del arnés y fuera del
+  bucle de generación; Langfuse; y dos comparaciones: `v1` frente a `v2` (D-029)
+  y el LLM frente a la plantilla (§11, pregunta 6).
+- **F2b · Sentidos**: referencia etiquetada según D-034 y comparación de cuatro
+  métodos: primera acepción (referencia), Lesk, embeddings con un modelo local y
+  Qwen3.5 local con «ninguno».
+- Sin plazo fijo. Ningún recorte del alcance se hace sin decidirlo y registrarlo.
+- Siguen en F4 la métrica J3, que es de las frases de A2, y el juez dentro del
+  bucle (§7.3), que exige tener medidos su acuerdo y su latencia.
+
+**Se reasigna**:
+
+| Pendiente | Origen | Pasa a | Por qué |
+|---|---|---|---|
+| J1–J2 y el acuerdo del juez con etiquetado humano | §9, §6.4 | F2a | Ver «Descartado» |
+| Razonamiento en el juez | D-003, §12.3 | F2a, con el juez | Se mide al medir su acuerdo |
+| Phi-4-mini | D-002 | F6 | Es una comparación de modelos; no cambia ninguna decisión de F2 |
+| Selector con API | D-034 | F6 | Necesita el adaptador de API de F6 |
+| Modelos entrenados, Nimble, Laya | D-034 | `IDEAS.md` | Código de investigación y sentidos que llevar a `oewn:2025`, sin evaluar |
+| Jev | D-034 | Pendiente del presupuesto | Entra si cabe en él, tras investigar su precio, sus condiciones y su integración |
+| Distractores con embeddings | §5.2, §11 (6) | F4 | Es un generador nuevo; F2a compara antes el LLM con la plantilla, que ya existe |
+| Arnés en la CI | §6.4 | F6 | D-011, §9 |
+| Definición que contiene la raíz (`somberly`) | D-038 | F3 | Regla de elegibilidad; no cambia ninguna decisión de F2 |
+
+**Criterio de salida de F2a**, escrito antes de empezar:
+
+1. El conjunto de A1 está versionado con su semilla, y regenerarlo con ella da el
+   mismo fichero.
+2. Un comando ejecuta cualquier configuración de la tarea, cambiando solo
+   variables de entorno, y escribe un informe versionado con básico, D1, D7,
+   O1–O3 y las versiones de Ollama y del modelo (D-024), con los casos
+   aleatorios y los de semilla por separado.
+3. Langfuse muestra una traza por ejercicio de `study`, con sus intentos, modelo,
+   versión del prompt, tokens y latencia.
+4. El acuerdo del juez en J1–J2 está medido frente a etiquetas humanas, sobre
+   casos que no se usaron para escribir su prompt, con y sin razonamiento
+   (D-003), y la decisión de usarlo está registrada con un umbral escrito antes.
+5. `v1` frente a `v2`, y el LLM frente a la plantilla, se han comparado con
+   reglas de decisión escritas antes de ver los resultados, y las decisiones
+   están registradas.
+
+**Criterio de salida de F2b**:
+
+1. La referencia está congelada y versionada, con el acuerdo entre los dos
+   etiquetadores.
+2. Los métodos se han ejecutado sobre ella, y el informe da la precisión en lo
+   respondido y la cobertura, sobre la referencia completa y sobre la parte
+   revisada a mano.
+3. El riesgo de la política conservadora está medido sobre los contextos
+   `eligible` de la referencia (D-025).
+4. Está registrado qué selector sustituye a la política conservadora, con qué
+   umbral, o ninguno, según una regla escrita antes.
+
+**Descartado**:
+
+- Una F2 única con todo lo heredado: seis métodos, tres sin conocer, sin un
+  final escrito.
+- Aplazar la desambiguación hasta después de F3: es el cuello de botella de
+  cobertura de `mcq_definition` (D-034).
+- Dejar el juez para F4: sin J1–J2, las métricas deterministas no ven los fallos
+  observados en F1 (D-027, D-036), y cada comparación de configuraciones
+  exigiría etiquetar a mano todas sus salidas.
+
+**Por qué**: son dos evaluaciones con conjuntos, etiquetado y métricas distintos,
+y ninguna bloquea a la otra. F2a sola cumple el entregable original de §9 y es un
+punto de parada.
+
+**Pendiente al empezar F2a**: el presupuesto de API (§11, pregunta 3); cuántas
+etiquetas humanas hacen falta y cómo se reparten entre escribir el prompt del
+juez y medir su acuerdo; y dónde vive el texto del conjunto, porque §6.4 lo
+versiona en el repositorio y las frases son fragmentos de libros (§10.1).
+
+---
+
+## D-040 · El juez empieza con el modelo local, y pasa a una API solo si no llega
+
+**Fecha**: 2026-11-04 · **Fase**: F2
+
+**Decisión**: el juez de J1–J2 empieza con Qwen3.5-4B local, con el razonamiento
+activado y desactivado. Pasa a un modelo comercial por API solo si su acuerdo
+con las etiquetas humanas no llega al umbral, que se fija antes de medir.
+
+**Descartado**:
+
+- Empezar con un modelo comercial: adelanta a F2 el adaptador de API de F6 y
+  gasta presupuesto antes de saber si hace falta.
+- Otro modelo local de otra familia, como Phi-4-mini: evitaría que el modelo se
+  juzgue a sí mismo, pero no está comprobado que permita activar y desactivar el
+  razonamiento, que es lo que pide D-003.
+
+**Por qué**:
+
+- Es gratis y usa el adaptador de Ollama que ya existe.
+- Mide D-003 con un solo modelo, cambiando únicamente el razonamiento.
+- El riesgo de autopreferencia se vigila comparando los fallos que el juez deja
+  pasar en las salidas del modelo y en las de la plantilla. No lo aísla del
+  todo, porque los fallos de cada una son de tipo distinto.
+
+**Coste**: si no llega al umbral, hay que escribir otro prompt para el modelo
+comercial, porque los prompts no son portables (§3.3.4).
+
+**Revisión**: al medir el acuerdo, en F2a.
 
 ---
 

@@ -1,7 +1,7 @@
 # Propuesta técnica — Aplicación de estudio de vocabulario
 
 **Documento de contexto del proyecto**
-Autor: Carlos Blázquez Martín · Versión 1.12 · Noviembre 2026
+Autor: Carlos Blázquez Martín · Versión 1.13 · Noviembre 2026
 
 ---
 
@@ -487,7 +487,7 @@ Validador semántico (juez, J1–J3)  ───────┘
 
 **Reintentos (D-028).** Un intento inicial y, como máximo, dos reintentos. Cada reintento lleva solo el motivo del último fallo, como datos: los distractores rechazados y sus violaciones, o por qué la salida no se pudo leer. El texto que lee el modelo lo escribe el adaptador con las plantillas del prompt. Si el proveedor no responde, se pasa a la plantilla sin reintentar y se conserva el motivo para avisar; los reintentos de errores de transporte pasajeros son del adaptador.
 
-**Validadores deterministas de F1 (D-027)**: el básico (distractores vacíos o repetidos), D1 y D7. El juez entra en F4.
+**Validadores deterministas de F1 (D-027)**: el básico (distractores vacíos o repetidos), D1 y D7. El juez entra en el bucle en F4; desde F2a se usa como métrica del arnés (D-039).
 
 **Degradaciones que no vienen del modelo (D-036).** Sin generador, porque la tarea no está configurada o el precalentamiento falló, los distractores salen de la plantilla. También cuando el modelo da distractores que pasan los validadores pero el ejercicio los rechaza por sus invariantes. Y si la plantilla no encuentra tres, el ejercicio es `cloze_original`, con aviso.
 
@@ -537,9 +537,10 @@ Ritmo asumido: 10–20 h semanales, en paralelo a la búsqueda activa de empleo.
 |---|---|---|---|
 | **F0 · Cimientos** | 1 (real: del 7 de septiembre al 1 de octubre de 2026) | Ingesta a Postgres, normalización con spaCy, limpieza, recorte de frases. `compose` completo. CLI que muestra `cloze_original`. | Ingesta y calidad de datos sobre datos reales y sucios. |
 | **F1 · Primera IA** | 2–3 (real: del 5 de octubre al 3 de noviembre de 2026, con parones del 10 al 25 de octubre y del 28 de octubre al 2 de noviembre) | Generación de distractores (A1) con salida Pydantic en el adaptador, validadores básico, D1 y D7 (D-027), bucle de reintento y degradación. Sigue siendo CLI. | Salidas estructuradas, validación, reintento con feedback, diseño de la degradación. |
-| **F2 · Medición** | 3–4 | Langfuse integrado. Arnés de evaluación con 100 casos y métricas deterministas. Informe versionado. Comparación de métodos de desambiguación de sentidos, con su etiquetado de referencia (D-034). | Evaluación de LLMs, coste y latencia por petición, metodología propia. **El diferenciador.** |
+| **F2a · Arnés** | Sin plazo fijo (D-039) | Conjunto de evaluación de A1, arnés con métricas deterministas y operativas, juez J1–J2 fuera del bucle con su acuerdo con etiquetado humano, Langfuse integrado, comparaciones `v1` frente a `v2` y LLM frente a plantilla (D-029, D-039, D-040). | Evaluación de LLMs, LLM como juez y sus límites, coste y latencia por petición, metodología propia. **El diferenciador.** |
+| **F2b · Sentidos** | Sin plazo fijo (D-039) | Referencia de sentidos etiquetada y comparación de cuatro métodos de desambiguación (D-034, D-039). | Clasificación con abstención, referencia validada, métodos con y sin LLM comparados. |
 | **F3 · Producto** | 4–5 | API FastAPI, interfaz Angular mínima, FSRS conectado. **La aplicación pasa a ser usable a diario.** | Sistema completo de extremo a extremo. |
-| **F4 · Segunda IA** | 5–6 | Frases nuevas de práctica (A2) y juez semántico (A3, métricas J1–J3). Acuerdo del juez con etiquetado humano. | Generación anclada a contexto, LLM como juez y sus límites. |
+| **F4 · Segunda IA** | 5–6 | Frases nuevas de práctica (A2), métrica J3 y juez dentro del bucle de generación (§7.3). J1–J2 y el acuerdo del juez, desde F2a (D-039). | Generación anclada a contexto, LLM como juez y sus límites. |
 | **F5 · Orquestación** | 6–7 | El bucle migrado a LangGraph, con justificación documentada de por qué solo ahí. | LangGraph, grafos con estado, criterio sobre cuándo no usarlos. |
 | **F6 · Producción** | 7–8 | Despliegue en Azure, CI/CD, comparativa local frente a API con números. | Despliegue real, CI/CD, comparativa de coste y calidad entre modelos. |
 | **F7 · Abierto** | — | Acepciones no consultadas (§5.4), importador CSV, español, servidor MCP. | Según lo que se implemente. |
@@ -588,7 +589,7 @@ Ritmo asumido: 10–20 h semanales, en paralelo a la búsqueda activa de empleo.
 ### Preguntas que pueden resolverse durante el desarrollo
 
 5. ~~¿Qué fuente de definiciones y acepciones usar para inglés, con licencia compatible?~~ **Resuelto para la definición correcta (D-025)**: Open English WordNet (`oewn:2025`), CC BY 4.0. Para §5.4 es la candidata, sin evaluar.
-6. ¿Los distractores generados por LLM superan a un enfoque con embeddings más filtro gramatical? Se responde con el arnés en F2.
+6. ¿Los distractores generados por LLM superan a un enfoque con embeddings más filtro gramatical? Frente a la plantilla, se responde en F2a con J1–J2 y etiquetado humano; la alternativa con embeddings, en F4 (D-039).
 7. ~~¿Qué significa exactamente la columna `category` del `vocab.db`?~~ **Cerrada**: un único registro con valor distinto de 0 en dos exportaciones. No se puede inferir y no se usa; FSRS gestiona el estado de aprendizaje.
 
 ---
@@ -635,7 +636,7 @@ Dos conclusiones:
 
 **Con Qwen3, `think:false` es peligroso.** No suprime el razonamiento: deja de separarlo en el campo `thinking` y lo vuelca dentro de `content`. Una configuración que parece correcta y rompería el parseo en producción. Es el motivo por el que el endpoint elegido es `/api/chat` con Qwen3.5 y no `/v1/`.
 
-**Revisión pendiente**: en la F2 hay que medir si el razonamiento mejora el juez semántico (J1–J3). La hipótesis es que ayuda al que juzga y no al que genera, pero no está comprobada.
+**Revisión pendiente**: en la F2a hay que medir si el razonamiento mejora el juez semántico en J1–J2 (D-039, D-040). La hipótesis es que ayuda al que juzga y no al que genera, pero no está comprobada.
 
 ### 12.4 Hallazgo: distractores triviales
 
